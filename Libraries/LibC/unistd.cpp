@@ -666,4 +666,48 @@ char* getpass(const char* prompt)
     dbg() << "FIXME: getpass(\"" << prompt << "\")";
     ASSERT_NOT_REACHED();
 }
+
+long sysconf(int name)
+{
+    switch (name)
+    {
+    case _SC_PAGESIZE:
+        return PAGE_SIZE;
+    case _SC_ARG_MAX:
+    case _SC_CHILD_MAX:
+    case _SC_HOST_NAME_MAX:
+    case _SC_LOGIN_NAME_MAX:
+    case _SC_CLK_TCK:
+    case _SC_OPEN_MAX:
+    case _SC_RE_DUP_MAX:
+    case _SC_STREAM_MAX:
+    case _SC_SYMLOOP_MAX:
+    case _SC_TTY_NAME_MAX:
+    case _SC_TZNAME_MAX:
+    case _SC_VERSION:
+    case _SC_BC_BASE_MAX:
+    case _SC_BC_DIM_MAX:
+    case _SC_BC_SCALE_MAX:
+    case _SC_BC_STRING_MAX:
+    case _SC_COLL_WEIGHTS_MAX:
+    case _SC_EXPR_NEST_MAX:
+    case _SC_LINE_MAX:
+    case _SC_2_VERSION:
+    case _SC_2_C_DEV:
+    case _SC_2_FORT_DEV:
+    case _SC_2_FORT_RUN:
+    case _SC_2_LOCALEDEF:
+    case _SC_2_SW_DEV:
+    case _SC_PHYS_PAGES:
+    case _SC_AVPHYS_PAGES:
+    case _SC_NPROCESSORS_CONF:
+    case _SC_NPROCESSORS_ONLN:
+        ASSERT_NOT_REACHED();
+        break;
+    
+    default:
+        errno = EINVAL;
+        return -1;
+    }
+}
 }
