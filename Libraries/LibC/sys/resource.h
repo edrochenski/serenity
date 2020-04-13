@@ -53,6 +53,10 @@ struct rusage {
 #define RUSAGE_SELF 1
 #define RUSAGE_CHILDREN 2
 
+#define PRIO_PROCESS 0
+#define PRIO_PGRP    1
+#define PRIO_USER    2
+
 int getrusage(int who, struct rusage* usage);
 
 __END_DECLS
