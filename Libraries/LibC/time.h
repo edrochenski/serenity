@@ -79,6 +79,10 @@ int clock_nanosleep(clockid_t, int flags, const struct timespec* requested_sleep
 int clock_getres(clockid_t, struct timespec* result);
 struct tm* gmtime_r(const time_t* timep, struct tm* result);
 struct tm* localtime_r(const time_t* timep, struct tm* result);
+int nanosleep(const struct timespec*, const struct timespec*);
+
+int getpriority(int which, id_t who);
+int setpriority(int which, id_t who, int prio);
 
 double difftime(time_t, time_t);
 size_t strftime(char* s, size_t max, const char* format, const struct tm*);

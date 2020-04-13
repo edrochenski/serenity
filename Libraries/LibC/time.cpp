@@ -344,4 +344,19 @@ int clock_getres(clockid_t, struct timespec*)
 {
     ASSERT_NOT_REACHED();
 }
+
+int nanosleep(const struct timespec*, const struct timespec*)
+{
+    ASSERT_NOT_REACHED();
+}
+
+int getpriority(int, id_t)
+{
+    ASSERT_NOT_REACHED();
+}
+
+int setpriority(int, id_t, int)
+{
+    ASSERT_NOT_REACHED();
+}
 }
