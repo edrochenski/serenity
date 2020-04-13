@@ -1,0 +1,102 @@
+--- htop-2.2.0/config.h	2018-04-10 09:43:17.000000000 -0400
++++ htop-2.2.0-port/config.h	2020-04-12 19:06:16.809212000 -0400
+@@ -2,10 +2,10 @@
+ /* config.h.in.  Generated from configure.ac by autoheader.  */
+ 
+ /* Define to 1 if the `closedir' function returns void instead of `int'. */
+-/* #undef CLOSEDIR_VOID */
++#define CLOSEDIR_VOID 1
+ 
+ /* Copyright message. */
+-#define COPYRIGHT "(C) 2004-2018 Hisham Muhammad"
++#define COPYRIGHT "(C) 2004-2020 Hisham Muhammad"
+ 
+ /* Define if ancient vserver support enabled. */
+ /* #undef HAVE_ANCIENT_VSERVER */
+@@ -24,7 +24,7 @@
+ #define HAVE_DIRENT_H 1
+ 
+ /* Define to 1 if you have the <execinfo.h> header file. */
+-#define HAVE_EXECINFO_H 1
++/* #undef HAVE_EXECINFO_H */
+ 
+ /* Define to 1 if you have the <hwloc.h> header file. */
+ /* #undef HAVE_HWLOC_H */
+@@ -48,10 +48,10 @@
+ /* #undef HAVE_LIBMALLOC */
+ 
+ /* The library is present. */
+-/* #undef HAVE_LIBNCURSES */
++#define HAVE_LIBNCURSES 1
+ 
+ /* The library is present. */
+-#define HAVE_LIBNCURSESW 1
++/* #undef HAVE_LIBNCURSESW */
+ 
+ /* Define to 1 if you have the `proc' library (-lproc). */
+ /* #undef HAVE_LIBPROC */
+@@ -66,10 +66,10 @@
+ #define HAVE_MEMORY_H 1
+ 
+ /* Define to 1 if you have the <ncursesw/curses.h> header file. */
+-#define HAVE_NCURSESW_CURSES_H 1
++/* #undef HAVE_NCURSESW_CURSES_H */
+ 
+ /* Define to 1 if you have the <ncurses/curses.h> header file. */
+-/* #undef HAVE_NCURSES_CURSES_H */
++#define HAVE_NCURSES_CURSES_H 1
+ 
+ /* Define to 1 if you have the <ncurses.h> header file. */
+ /* #undef HAVE_NCURSES_H */
+@@ -91,7 +91,7 @@
+ 
+ /* Define to 1 if `stat' has the bug that it succeeds when given the
+    zero-length file name argument. */
+-/* #undef HAVE_STAT_EMPTY_STRING_BUG */
++#define HAVE_STAT_EMPTY_STRING_BUG 1
+ 
+ /* Define to 1 if stdbool.h conforms to C99. */
+ #define HAVE_STDBOOL_H 1
+@@ -151,7 +151,7 @@
+ 
+ /* Define to 1 if `lstat' dereferences a symlink specified with a trailing
+    slash. */
+-#define LSTAT_FOLLOWS_SLASHED_SYMLINK 1
++/* #undef LSTAT_FOLLOWS_SLASHED_SYMLINK */
+ 
+ /* Define to 1 if `major', `minor', and `makedev' are declared in <mkdev.h>.
+    */
+@@ -159,7 +159,7 @@
+ 
+ /* Define to 1 if `major', `minor', and `makedev' are declared in
+    <sys/sysmacros.h>. */
+-/* #undef MAJOR_IN_SYSMACROS */
++#define MAJOR_IN_SYSMACROS 1
+ 
+ /* Name of package */
+ #define PACKAGE "htop"
+Only in htop-2.2.0-port/: config.log
+Only in htop-2.2.0-port/: config.status
+diff -ru htop-2.2.0/config.sub htop-2.2.0-port/config.sub
+--- htop-2.2.0/config.sub	2018-04-06 09:58:03.000000000 -0400
++++ htop-2.2.0-port/config.sub	2020-04-12 19:00:06.962103511 -0400
+@@ -1392,7 +1392,7 @@
+ 	      | -storm-chaos* | -tops10* | -tenex* | -tops20* | -its* \
+ 	      | -os2* | -vos* | -palmos* | -uclinux* | -nucleus* \
+ 	      | -morphos* | -superux* | -rtmk* | -rtmk-nova* | -windiss* \
+-	      | -powermax* | -dnix* | -nx6 | -nx7 | -sei* | -dragonfly* \
++	      | -powermax* | -dnix* | -nx6 | -nx7 | -sei* | -dragonfly* | -serenity* \
+ 	      | -skyos* | -haiku* | -rdos* | -toppers* | -drops* | -es* | -tirtos*)
+ 	# Remember, each alternative MUST END IN *, to match a version number.
+ 		;;
+diff -ru htop-2.2.0/TraceScreen.c htop-2.2.0-port/TraceScreen.c
+--- htop-2.2.0/TraceScreen.c	2018-04-10 09:23:24.000000000 -0400
++++ htop-2.2.0-port/TraceScreen.c	2020-04-12 20:45:46.403570444 -0400
+@@ -22,6 +22,7 @@
+ #include <stdbool.h>
+ #include <unistd.h>
+ #include <fcntl.h>
++#include <sys/select.h>
+ #include <sys/time.h>
+ #include <sys/types.h>
+ #include <sys/wait.h>
