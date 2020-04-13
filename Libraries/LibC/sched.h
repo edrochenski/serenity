@@ -47,4 +47,13 @@ int sched_get_priority_max(int policy);
 int sched_setparam(pid_t pid, const struct sched_param* param);
 int sched_getparam(pid_t pid, struct sched_param* param);
 
+#define __CPU_SETSIZE 1024
+#define __NCPUBITS    64ULL
+
+typedef struct 
+{
+    int __bits[__CPU_SETSIZE / __NCPUBITS];
+} cpu_set_t;
+
+
 __END_DECLS
