@@ -25,14 +25,14 @@
  */
 
 #include <LibJS/Interpreter.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/NumberPrototype.h>
 
 namespace JS {
 
 NumberPrototype::NumberPrototype()
-    : NumberObject(0)
+    : NumberObject(0, *interpreter().global_object().object_prototype())
 {
-    set_prototype(interpreter().object_prototype());
 }
 
 NumberPrototype::~NumberPrototype()

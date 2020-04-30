@@ -27,7 +27,7 @@
 #include <AK/StringBuilder.h>
 #include <LibCore/ConfigFile.h>
 #include <LibCore/File.h>
-#include <LibCore/UserInfo.h>
+#include <LibCore/StandardPaths.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -36,9 +36,7 @@ namespace Core {
 
 NonnullRefPtr<ConfigFile> ConfigFile::get_for_app(const String& app_name)
 {
-    String home_path = get_current_user_home_path();
-    if (home_path == "/")
-        home_path = String::format("/tmp");
+    String home_path = StandardPaths::home_directory();
     auto path = String::format("%s/%s.ini", home_path.characters(), app_name.characters());
     return adopt(*new ConfigFile(path));
 }
@@ -140,7 +138,10 @@ int ConfigFile::read_num_entry(const String& group, const String& key, int defau
 
 bool ConfigFile::read_bool_entry(const String& group, const String& key, bool default_value) const
 {
-    return read_entry(group, key, default_value ? "1" : "0") == "1";
+    auto value = read_entry(group, key, default_value ? "1" : "0");
+    if (value == "1" || value.to_lowercase() == "true")
+        return 1;
+    return 0;
 }
 
 void ConfigFile::write_entry(const String& group, const String& key, const String& value)

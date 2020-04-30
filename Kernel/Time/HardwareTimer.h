@@ -40,14 +40,16 @@ enum class HardwareTimerType {
     HighPrecisionEventTimer = 0x3 /* also known as IA-PC HPET */
 };
 
-class HardwareTimer : public RefCounted<HardwareTimer>
+class HardwareTimer
+    : public RefCounted<HardwareTimer>
     , public IRQHandler {
 public:
     virtual HardwareTimerType timer_type() const = 0;
     virtual const char* model() const = 0;
     virtual const char* purpose() const override;
 
-    virtual void change_function(Function<void(const RegisterState&)>);
+    void set_callback(Function<void(const RegisterState&)>);
+
     virtual size_t ticks_per_second() const = 0;
 
     virtual bool is_periodic() const = 0;
@@ -61,12 +63,13 @@ public:
     virtual size_t calculate_nearest_possible_frequency(size_t frequency) const = 0;
 
 protected:
-    HardwareTimer(u8 irq_number, Function<void(const RegisterState&)>);
+    HardwareTimer(u8 irq_number, Function<void(const RegisterState&)> = nullptr);
     //^IRQHandler
     virtual void handle_irq(const RegisterState&) override;
     u64 m_frequency { OPTIMAL_TICKS_PER_SECOND_RATE };
 
 private:
-    Function<void(const RegisterState&)> m_function_to_call;
+    Function<void(const RegisterState&)> m_callback;
 };
+
 }

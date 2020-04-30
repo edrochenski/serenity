@@ -39,6 +39,7 @@
 #include <LibGUI/StackWidget.h>
 #include <LibGUI/TableView.h>
 #include <LibGUI/ToolBar.h>
+#include <LibGUI/ToolBarContainer.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -49,8 +50,8 @@ IRCAppWindow& IRCAppWindow::the()
     return *s_the;
 }
 
-IRCAppWindow::IRCAppWindow()
-    : m_client(IRCClient::construct())
+IRCAppWindow::IRCAppWindow(String server, int port)
+    : m_client(IRCClient::construct(server, port))
 {
     ASSERT(!s_the);
     s_the = this;
@@ -259,7 +260,7 @@ void IRCAppWindow::setup_actions()
 
 void IRCAppWindow::setup_menus()
 {
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
     auto& app_menu = menubar->add_menu("IRC Client");
     app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
         dbgprintf("Terminal: Quit menu activated!\n");
@@ -281,15 +282,17 @@ void IRCAppWindow::setup_menus()
     channel_menu.add_action(*m_change_topic_action);
     channel_menu.add_action(*m_invite_user_action);
     channel_menu.add_action(*m_banlist_action);
-    channel_menu.add_separator();
-    channel_menu.add_action(*m_voice_user_action);
-    channel_menu.add_action(*m_devoice_user_action);
-    channel_menu.add_action(*m_hop_user_action);
-    channel_menu.add_action(*m_dehop_user_action);
-    channel_menu.add_action(*m_op_user_action);
-    channel_menu.add_action(*m_deop_user_action);
-    channel_menu.add_separator();
-    channel_menu.add_action(*m_kick_user_action);
+
+    auto& channel_control_menu = channel_menu.add_submenu("Control");
+    channel_control_menu.add_action(*m_voice_user_action);
+    channel_control_menu.add_action(*m_devoice_user_action);
+    channel_control_menu.add_action(*m_hop_user_action);
+    channel_control_menu.add_action(*m_dehop_user_action);
+    channel_control_menu.add_action(*m_op_user_action);
+    channel_control_menu.add_action(*m_deop_user_action);
+    channel_control_menu.add_separator();
+    channel_control_menu.add_action(*m_kick_user_action);
+
     channel_menu.add_separator();
     channel_menu.add_action(*m_cycle_channel_action);
     channel_menu.add_action(*m_part_action);
@@ -309,7 +312,8 @@ void IRCAppWindow::setup_widgets()
     widget.set_layout<GUI::VerticalBoxLayout>();
     widget.layout()->set_spacing(0);
 
-    auto& toolbar = widget.add<GUI::ToolBar>();
+    auto& toolbar_container = widget.add<GUI::ToolBarContainer>();
+    auto& toolbar = toolbar_container.add<GUI::ToolBar>();
     toolbar.set_has_frame(false);
     toolbar.add_action(*m_change_nick_action);
     toolbar.add_separator();

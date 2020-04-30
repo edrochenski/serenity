@@ -27,11 +27,11 @@
 #include <AK/FileSystemPath.h>
 #include <AK/URL.h>
 #include <LibCore/File.h>
+#include <LibGfx/ImageDecoder.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/ScrollBar.h>
 #include <LibGUI/Window.h>
-#include <LibGfx/PNGLoader.h>
 #include <LibJS/Runtime/Value.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/ElementFactory.h>
@@ -238,7 +238,7 @@ void HtmlView::mousedown_event(GUI::MouseEvent& event)
                     run_javascript_url(link->href());
                 } else {
                     if (on_link_click)
-                        on_link_click(link->href());
+                        on_link_click(link->href(), link->target(), event.modifiers());
                 }
             } else {
                 if (event.button() == GUI::MouseButton::Left) {
@@ -317,7 +317,8 @@ static RefPtr<Document> create_image_document(const ByteBuffer& data, const URL&
 {
     auto document = adopt(*new Document(url));
 
-    auto bitmap = Gfx::load_png_from_memory(data.data(), data.size());
+    auto image_decoder = Gfx::ImageDecoder::create(data.data(), data.size());
+    auto bitmap = image_decoder->bitmap();
     ASSERT(bitmap);
 
     auto html_element = create_element(document, "html");
@@ -366,7 +367,7 @@ void HtmlView::load(const URL& url)
             }
 
             RefPtr<Document> document;
-            if (url.path().ends_with(".png")) {
+            if (url.path().ends_with(".png") || url.path().ends_with(".gif")) {
                 document = create_image_document(data, url);
             } else {
                 document = parse_html_document(data, url);
@@ -379,6 +380,31 @@ void HtmlView::load(const URL& url)
         [this, url](auto error) {
             load_error_page(url, error);
         });
+
+    if (url.protocol() != "file") {
+        URL favicon_url;
+        favicon_url.set_protocol(url.protocol());
+        favicon_url.set_host(url.host());
+        favicon_url.set_port(url.port());
+        favicon_url.set_path("/favicon.ico");
+
+        ResourceLoader::the().load(
+            favicon_url,
+            [this, favicon_url](auto data) {
+                dbg() << "Favicon downloaded, " << data.size() << " bytes from " << favicon_url.to_string();
+                auto decoder = Gfx::ImageDecoder::create(data.data(), data.size());
+                auto bitmap = decoder->bitmap();
+                if (!bitmap) {
+                    dbg() << "Could not decode favicon " << favicon_url.to_string();
+                    return;
+                }
+                dbg() << "Decoded favicon, " << bitmap->size();
+                if (on_favicon_change)
+                    on_favicon_change(*bitmap);
+            });
+    }
+
+    this->scroll_to_top();
 }
 
 void HtmlView::load_error_page(const URL& failed_url, const String& error)

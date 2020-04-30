@@ -26,16 +26,22 @@
 
 #include <LibJS/Heap/Heap.h>
 #include <LibJS/Interpreter.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/NumberObject.h>
 #include <LibJS/Runtime/NumberPrototype.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
 
-NumberObject::NumberObject(double value)
-    : m_value(value)
+NumberObject* NumberObject::create(GlobalObject& global_object, double value)
 {
-    set_prototype(interpreter().number_prototype());
+    return global_object.heap().allocate<NumberObject>(value, *global_object.number_prototype());
+}
+
+NumberObject::NumberObject(double value, Object& prototype)
+    : Object(&prototype)
+    , m_value(value)
+{
 }
 
 NumberObject::~NumberObject()

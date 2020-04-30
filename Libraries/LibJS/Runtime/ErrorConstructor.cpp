@@ -27,13 +27,15 @@
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/ErrorConstructor.h>
+#include <LibJS/Runtime/GlobalObject.h>
 
 namespace JS {
 
 ErrorConstructor::ErrorConstructor()
+    : NativeFunction("Error", *interpreter().global_object().function_prototype())
 {
-    put("prototype", interpreter().error_prototype());
-    put("length", Value(1));
+    put("prototype", interpreter().global_object().error_prototype(), 0);
+    put("length", Value(1), Attribute::Configurable);
 }
 
 ErrorConstructor::~ErrorConstructor()
@@ -50,14 +52,15 @@ Value ErrorConstructor::construct(Interpreter& interpreter)
     String message = "";
     if (!interpreter.call_frame().arguments.is_empty() && !interpreter.call_frame().arguments[0].is_undefined())
         message = interpreter.call_frame().arguments[0].to_string();
-    return interpreter.heap().allocate<Error>("Error", message);
+    return Error::create(interpreter.global_object(), "Error", message);
 }
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName)                                        \
     ConstructorName::ConstructorName()                                                                               \
+        : NativeFunction(*interpreter().global_object().function_prototype())                                        \
     {                                                                                                                \
-        put("prototype", interpreter().snake_name##_prototype());                                                    \
-        put("length", Value(1));                                                                                     \
+        put("prototype", interpreter().global_object().snake_name##_prototype(), 0);                                 \
+        put("length", Value(1), Attribute::Configurable);                                                            \
     }                                                                                                                \
     ConstructorName::~ConstructorName() {}                                                                           \
     Value ConstructorName::call(Interpreter& interpreter)                                                            \
@@ -69,7 +72,7 @@ Value ErrorConstructor::construct(Interpreter& interpreter)
         String message = "";                                                                                         \
         if (!interpreter.call_frame().arguments.is_empty() && !interpreter.call_frame().arguments[0].is_undefined()) \
             message = interpreter.call_frame().arguments[0].to_string();                                             \
-        return interpreter.heap().allocate<ClassName>(message);                                                      \
+        return ClassName::create(interpreter.global_object(), message);                                              \
     }
 
 JS_ENUMERATE_ERROR_SUBCLASSES

@@ -118,7 +118,7 @@ int main(int argc, char** argv)
     auto& keeper = window->set_main_widget<GUI::Widget>();
     keeper.set_layout<GUI::VerticalBoxLayout>();
     keeper.set_fill_with_background_color(true);
-    keeper.layout()->set_margins({ 4, 4, 4, 4 });
+    keeper.layout()->set_margins({ 2, 2, 2, 2 });
 
     auto& tabwidget = keeper.add<GUI::TabWidget>();
 
@@ -174,7 +174,7 @@ int main(int argc, char** argv)
     toolbar.add_action(stop_action);
     toolbar.add_action(continue_action);
 
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
     auto& app_menu = menubar->add_menu("System Monitor");
     app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the().quit(0);
@@ -200,11 +200,9 @@ int main(int argc, char** argv)
     frequency_action_group.set_exclusive(true);
 
     auto make_frequency_action = [&](auto& title, int interval, bool checked = false) {
-        auto action = GUI::Action::create(title, [&refresh_timer, interval](auto& action) {
+        auto action = GUI::Action::create_checkable(title, [&refresh_timer, interval](auto&) {
             refresh_timer.restart(interval);
-            action.set_checked(true);
         });
-        action->set_checkable(true);
         action->set_checked(checked);
         frequency_action_group.add_action(*action);
         frequency_menu.add_action(*action);

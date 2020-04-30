@@ -100,9 +100,9 @@ ScrollBar::ScrollBar(Orientation orientation)
         s_right_arrow_bitmap = &Gfx::CharacterBitmap::create_from_ascii(s_right_arrow_bitmap_data, 9, 9).leak_ref();
 
     if (m_orientation == Orientation::Vertical) {
-        set_preferred_size(15, 0);
+        set_preferred_size(16, 0);
     } else {
-        set_preferred_size(0, 15);
+        set_preferred_size(0, 16);
     }
 
     m_automatic_scrolling_timer->set_interval(100);
@@ -220,7 +220,7 @@ void ScrollBar::paint_event(PaintEvent& event)
     Painter painter(*this);
     painter.add_clip_rect(event.rect());
 
-    painter.fill_rect(rect(), palette().button().lightened());
+    painter.fill_rect(rect(), palette().button().lightened(1.1f));
 
     bool decrement_pressed = m_automatic_scrolling_direction == AutomaticScrollingDirection::Decrement;
     bool increment_pressed = m_automatic_scrolling_direction == AutomaticScrollingDirection::Increment;

@@ -36,8 +36,18 @@
 #include <LibGUI/Window.h>
 #include <LibGfx/Palette.h>
 
+namespace Browser {
+
+static BookmarksBarWidget* s_the;
+
+BookmarksBarWidget& BookmarksBarWidget::the()
+{
+    return *s_the;
+}
+
 BookmarksBarWidget::BookmarksBarWidget(const String& bookmarks_file, bool enabled)
 {
+    s_the = this;
     set_layout<GUI::HorizontalBoxLayout>();
     layout()->set_spacing(0);
 
@@ -92,7 +102,6 @@ void BookmarksBarWidget::did_update_model()
     for (auto* child : child_widgets()) {
         child->remove_from_parent();
     }
-    child_widgets().clear();
 
     m_bookmarks.clear();
 
@@ -184,8 +193,12 @@ bool BookmarksBarWidget::remove_bookmark(const String& url)
         auto item_url = model()->data(model()->index(item_index, 1)).to_string();
         if (item_url == url) {
             auto& json_model = *static_cast<GUI::JsonArrayModel*>(model());
-            json_model.remove(item_index);
-            return true;
+
+            const auto item_removed = json_model.remove(item_index);
+            if (item_removed)
+                json_model.store();
+
+            return item_removed;
         }
     }
 
@@ -203,4 +216,6 @@ bool BookmarksBarWidget::add_bookmark(const String& url, const String& title)
         return true;
     }
     return false;
+}
+
 }

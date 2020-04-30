@@ -29,17 +29,29 @@
 #include <LibJS/Heap/Heap.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/ArrayConstructor.h>
+#include <LibJS/Runtime/ArrayPrototype.h>
 #include <LibJS/Runtime/BooleanConstructor.h>
+#include <LibJS/Runtime/BooleanPrototype.h>
 #include <LibJS/Runtime/ConsoleObject.h>
 #include <LibJS/Runtime/DateConstructor.h>
+#include <LibJS/Runtime/DatePrototype.h>
+#include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/ErrorConstructor.h>
+#include <LibJS/Runtime/ErrorPrototype.h>
 #include <LibJS/Runtime/FunctionConstructor.h>
+#include <LibJS/Runtime/FunctionPrototype.h>
 #include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/LexicalEnvironment.h>
 #include <LibJS/Runtime/MathObject.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/NumberConstructor.h>
+#include <LibJS/Runtime/NumberPrototype.h>
+#include <LibJS/Runtime/Object.h>
 #include <LibJS/Runtime/ObjectConstructor.h>
+#include <LibJS/Runtime/ObjectPrototype.h>
+#include <LibJS/Runtime/Shape.h>
 #include <LibJS/Runtime/StringConstructor.h>
+#include <LibJS/Runtime/StringPrototype.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
@@ -49,34 +61,54 @@ void GlobalObject::add_constructor(const FlyString& property_name, ConstructorTy
 {
     constructor = heap().allocate<ConstructorType>();
     prototype.put("constructor", constructor);
-    put(property_name, constructor);
+    put(property_name, constructor, Attribute::Writable | Attribute::Configurable);
 }
 
 GlobalObject::GlobalObject()
+    : Object(nullptr)
 {
-    put_native_function("gc", gc);
-    put_native_function("isNaN", is_nan, 1);
+}
 
-    // FIXME: These are read-only in ES5
-    put("NaN", js_nan());
-    put("Infinity", js_infinity());
-    put("undefined", js_undefined());
+void GlobalObject::initialize()
+{
+    // These are done first since other prototypes depend on their presence.
+    m_empty_object_shape = heap().allocate<Shape>();
+    m_object_prototype = heap().allocate<ObjectPrototype>();
+    m_function_prototype = heap().allocate<FunctionPrototype>();
 
-    put("globalThis", this);
-    put("console", heap().allocate<ConsoleObject>());
-    put("Math", heap().allocate<MathObject>());
-
-    add_constructor("Array", m_array_constructor, *interpreter().array_prototype());
-    add_constructor("Boolean", m_boolean_constructor, *interpreter().boolean_prototype());
-    add_constructor("Date", m_date_constructor, *interpreter().date_prototype());
-    add_constructor("Error", m_error_constructor, *interpreter().error_prototype());
-    add_constructor("Function", m_function_constructor, *interpreter().function_prototype());
-    add_constructor("Number", m_number_constructor, *interpreter().number_prototype());
-    add_constructor("Object", m_object_constructor, *interpreter().object_prototype());
-    add_constructor("String", m_string_constructor, *interpreter().string_prototype());
+    static_cast<FunctionPrototype*>(m_function_prototype)->initialize();
+    static_cast<ObjectPrototype*>(m_object_prototype)->initialize();
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \
-    add_constructor(#ClassName, m_##snake_name##_constructor, *interpreter().snake_name##_prototype());
+    if (!m_##snake_name##_prototype)                                          \
+        m_##snake_name##_prototype = heap().allocate<PrototypeName>();
+    JS_ENUMERATE_BUILTIN_TYPES
+#undef __JS_ENUMERATE
+
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+    put_native_function("gc", gc, 0, attr);
+    put_native_function("isNaN", is_nan, 1, attr);
+    put_native_function("isFinite", is_finite, 1, attr);
+
+    put("NaN", js_nan(), 0);
+    put("Infinity", js_infinity(), 0);
+    put("undefined", js_undefined(), 0);
+
+    put("globalThis", this, attr);
+    put("console", heap().allocate<ConsoleObject>(), attr);
+    put("Math", heap().allocate<MathObject>(), attr);
+
+    add_constructor("Array", m_array_constructor, *m_array_prototype);
+    add_constructor("Boolean", m_boolean_constructor, *m_boolean_prototype);
+    add_constructor("Date", m_date_constructor, *m_date_prototype);
+    add_constructor("Error", m_error_constructor, *m_error_prototype);
+    add_constructor("Function", m_function_constructor, *m_function_prototype);
+    add_constructor("Number", m_number_constructor, *m_number_prototype);
+    add_constructor("Object", m_object_constructor, *m_object_prototype);
+    add_constructor("String", m_string_constructor, *m_string_prototype);
+
+#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \
+    add_constructor(#ClassName, m_##snake_name##_constructor, *m_##snake_name##_prototype);
     JS_ENUMERATE_ERROR_SUBCLASSES
 #undef __JS_ENUMERATE
 }
@@ -89,13 +121,12 @@ void GlobalObject::visit_children(Visitor& visitor)
 {
     Object::visit_children(visitor);
 
-    visitor.visit(m_array_constructor);
-    visitor.visit(m_boolean_constructor);
-    visitor.visit(m_date_constructor);
-    visitor.visit(m_error_constructor);
-    visitor.visit(m_function_constructor);
-    visitor.visit(m_number_constructor);
-    visitor.visit(m_object_constructor);
+    visitor.visit(m_empty_object_shape);
+
+#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \
+    visitor.visit(m_##snake_name##_constructor);
+    JS_ENUMERATE_ERROR_SUBCLASSES
+#undef __JS_ENUMERATE
 }
 
 Value GlobalObject::gc(Interpreter& interpreter)
@@ -107,9 +138,12 @@ Value GlobalObject::gc(Interpreter& interpreter)
 
 Value GlobalObject::is_nan(Interpreter& interpreter)
 {
-    if (interpreter.argument_count() < 1)
-        return js_undefined();
     return Value(interpreter.argument(0).to_number().is_nan());
+}
+
+Value GlobalObject::is_finite(Interpreter& interpreter)
+{
+    return Value(interpreter.argument(0).to_number().is_finite_number());
 }
 
 }

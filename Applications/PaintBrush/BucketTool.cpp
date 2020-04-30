@@ -47,14 +47,18 @@ static void flood_fill(Gfx::Bitmap& bitmap, const Gfx::Point& start_position, Co
     if (target_color == fill_color)
         return;
 
+    if (!bitmap.rect().contains(start_position))
+        return;
+
     Queue<Gfx::Point> queue;
     queue.enqueue(start_position);
     while (!queue.is_empty()) {
         auto position = queue.dequeue();
 
-        if (bitmap.get_pixel<Gfx::BitmapFormat::RGB32>(position.x(), position.y()) != target_color)
+        if (bitmap.get_pixel<Gfx::BitmapFormat::RGBA32>(position.x(), position.y()) != target_color)
             continue;
-        bitmap.set_pixel<Gfx::BitmapFormat::RGB32>(position.x(), position.y(), fill_color);
+        
+        bitmap.set_pixel<Gfx::BitmapFormat::RGBA32>(position.x(), position.y(), fill_color);
 
         if (position.x() != 0)
             queue.enqueue(position.translated(-1, 0));

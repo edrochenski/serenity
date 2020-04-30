@@ -28,6 +28,8 @@
 #include <LibGfx/Painter.h>
 #include <LibWeb/DOM/CanvasRenderingContext2D.h>
 #include <LibWeb/DOM/HTMLCanvasElement.h>
+#include <LibWeb/DOM/HTMLImageElement.h>
+#include <LibWeb/DOM/ImageData.h>
 
 namespace Web {
 
@@ -78,8 +80,34 @@ void CanvasRenderingContext2D::stroke_rect(float x, float y, float width, float 
         return;
 
     auto rect = m_transform.map(Gfx::FloatRect(x, y, width, height));
-    painter->draw_rect(enclosing_int_rect(rect), m_stroke_style);
+
+    auto top_left = m_transform.map(Gfx::FloatPoint(x, y)).to_int_point();
+    auto top_right = m_transform.map(Gfx::FloatPoint(x + width - 1, y)).to_int_point();
+    auto bottom_left = m_transform.map(Gfx::FloatPoint(x, y + height - 1)).to_int_point();
+    auto bottom_right = m_transform.map(Gfx::FloatPoint(x + width - 1, y + height - 1)).to_int_point();
+
+    painter->draw_line(top_left, top_right, m_stroke_style, m_line_width);
+    painter->draw_line(top_right, bottom_right, m_stroke_style, m_line_width);
+    painter->draw_line(bottom_right, bottom_left, m_stroke_style, m_line_width);
+    painter->draw_line(bottom_left, top_left, m_stroke_style, m_line_width);
+
     did_draw(rect);
+}
+
+void CanvasRenderingContext2D::draw_image(const HTMLImageElement& image_element, float x, float y)
+{
+    if (!image_element.bitmap())
+        return;
+
+    auto painter = this->painter();
+    if (!painter)
+        return;
+
+    auto src_rect = image_element.bitmap()->rect();
+    Gfx::FloatRect dst_rect = { x, y, (float)image_element.bitmap()->width(), (float)image_element.bitmap()->height() };
+    auto rect = m_transform.map(dst_rect);
+
+    painter->draw_scaled_bitmap(enclosing_int_rect(rect), *image_element.bitmap(), src_rect);
 }
 
 void CanvasRenderingContext2D::scale(float sx, float sy)
@@ -109,7 +137,59 @@ OwnPtr<Gfx::Painter> CanvasRenderingContext2D::painter()
     if (!m_element)
         return nullptr;
 
-    return make<Gfx::Painter>(m_element->ensure_bitmap());
+    if (!m_element->bitmap()) {
+        if (!m_element->create_bitmap())
+            return nullptr;
+    }
+
+    return make<Gfx::Painter>(*m_element->bitmap());
+}
+
+void CanvasRenderingContext2D::begin_path()
+{
+    m_path = Gfx::Path();
+}
+
+void CanvasRenderingContext2D::close_path()
+{
+    m_path.close();
+}
+
+void CanvasRenderingContext2D::move_to(float x, float y)
+{
+    m_path.move_to({ x, y });
+}
+
+void CanvasRenderingContext2D::line_to(float x, float y)
+{
+    m_path.line_to({ x, y });
+}
+
+void CanvasRenderingContext2D::stroke()
+{
+    dbg() << "stroke path " << m_path;
+
+    auto painter = this->painter();
+    if (!painter)
+        return;
+
+    painter->stroke_path(m_path, m_stroke_style, m_line_width);
+}
+
+RefPtr<ImageData> CanvasRenderingContext2D::create_image_data(JS::GlobalObject& global_object, int width, int height) const
+{
+    return ImageData::create_with_size(global_object, width, height);
+}
+
+void CanvasRenderingContext2D::put_image_data(const ImageData& image_data, float x, float y)
+{
+    auto painter = this->painter();
+    if (!painter)
+        return;
+
+    painter->blit(Gfx::Point(x, y), image_data.bitmap(), image_data.bitmap().rect());
+
+    did_draw(Gfx::FloatRect(x, y, image_data.width(), image_data.height()));
 }
 
 }

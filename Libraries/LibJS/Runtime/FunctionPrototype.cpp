@@ -28,20 +28,29 @@
 #include <AK/StringBuilder.h>
 #include <LibJS/AST.h>
 #include <LibJS/Interpreter.h>
+#include <LibJS/Runtime/BoundFunction.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/Function.h>
 #include <LibJS/Runtime/FunctionPrototype.h>
+#include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/MarkedValueList.h>
 #include <LibJS/Runtime/ScriptFunction.h>
 
 namespace JS {
 
 FunctionPrototype::FunctionPrototype()
+    : Object(interpreter().global_object().object_prototype())
 {
-    put_native_function("apply", apply, 2);
-    put_native_function("bind", bind, 1);
-    put_native_function("call", call, 1);
-    put_native_function("toString", to_string);
-    put("length", Value(0));
+}
+
+void FunctionPrototype::initialize()
+{
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+    put_native_function("apply", apply, 2, attr);
+    put_native_function("bind", bind, 1, attr);
+    put_native_function("call", call, 1, attr);
+    put_native_function("toString", to_string, 0, attr);
+    put("length", Value(0), Attribute::Configurable);
 }
 
 FunctionPrototype::~FunctionPrototype()
@@ -55,7 +64,7 @@ Value FunctionPrototype::apply(Interpreter& interpreter)
         return {};
     if (!this_object->is_function())
         return interpreter.throw_exception<TypeError>("Not a Function object");
-    auto function = static_cast<Function*>(this_object);
+    auto& function = static_cast<Function&>(*this_object);
     auto this_arg = interpreter.argument(0);
     auto arg_array = interpreter.argument(1);
     if (arg_array.is_null() || arg_array.is_undefined())
@@ -64,12 +73,16 @@ Value FunctionPrototype::apply(Interpreter& interpreter)
         return interpreter.throw_exception<TypeError>("argument array must be an object");
     size_t length = 0;
     auto length_property = arg_array.as_object().get("length");
-    if (length_property.has_value())
-        length = length_property.value().to_number().to_i32();
-    Vector<Value> arguments;
-    for (size_t i = 0; i < length; ++i)
-        arguments.append(arg_array.as_object().get(String::number(i)).value_or(js_undefined()));
-    return interpreter.call(function, this_arg, arguments);
+    if (!length_property.is_empty())
+        length = length_property.to_number().to_i32();
+    MarkedValueList arguments(interpreter.heap());
+    for (size_t i = 0; i < length; ++i) {
+        auto element = arg_array.as_object().get(String::number(i));
+        if (interpreter.exception())
+            return {};
+        arguments.append(element.value_or(js_undefined()));
+    }
+    return interpreter.call(function, this_arg, move(arguments));
 }
 
 Value FunctionPrototype::bind(Interpreter& interpreter)
@@ -77,8 +90,19 @@ Value FunctionPrototype::bind(Interpreter& interpreter)
     auto* this_object = interpreter.this_value().to_object(interpreter.heap());
     if (!this_object)
         return {};
-    // FIXME: Implement me :^)
-    ASSERT_NOT_REACHED();
+    if (!this_object->is_function())
+        return interpreter.throw_exception<TypeError>("Not a Function object");
+
+    auto& this_function = static_cast<Function&>(*this_object);
+    auto bound_this_arg = interpreter.argument(0);
+
+    Vector<Value> arguments;
+    if (interpreter.argument_count() > 1) {
+        arguments = interpreter.call_frame().arguments;
+        arguments.remove(0);
+    }
+
+    return this_function.bind(bound_this_arg, move(arguments));
 }
 
 Value FunctionPrototype::call(Interpreter& interpreter)
@@ -88,14 +112,14 @@ Value FunctionPrototype::call(Interpreter& interpreter)
         return {};
     if (!this_object->is_function())
         return interpreter.throw_exception<TypeError>("Not a Function object");
-    auto function = static_cast<Function*>(this_object);
+    auto& function = static_cast<Function&>(*this_object);
     auto this_arg = interpreter.argument(0);
-    Vector<Value> arguments;
+    MarkedValueList arguments(interpreter.heap());
     if (interpreter.argument_count() > 1) {
         for (size_t i = 1; i < interpreter.argument_count(); ++i)
             arguments.append(interpreter.argument(i));
     }
-    return interpreter.call(function, this_arg, arguments);
+    return interpreter.call(function, this_arg, move(arguments));
 }
 
 Value FunctionPrototype::to_string(Interpreter& interpreter)
@@ -110,7 +134,7 @@ Value FunctionPrototype::to_string(Interpreter& interpreter)
     String function_parameters = "";
     String function_body;
 
-    if (this_object->is_native_function()) {
+    if (this_object->is_native_function() || this_object->is_bound_function()) {
         function_body = String::format("  [%s]", this_object->class_name());
     } else {
         auto& parameters = static_cast<ScriptFunction*>(this_object)->parameters();
@@ -122,7 +146,11 @@ Value FunctionPrototype::to_string(Interpreter& interpreter)
         // function_body = body.to_source();
         function_body = "  ???";
     }
-    auto function_source = String::format("function %s(%s) {\n%s\n}", function_name.characters(), function_parameters.characters(), function_body.characters());
+
+    auto function_source = String::format("function %s(%s) {\n%s\n}",
+        function_name.is_null() ? "" : function_name.characters(),
+        function_parameters.characters(),
+        function_body.characters());
     return js_string(interpreter, function_source);
 }
 

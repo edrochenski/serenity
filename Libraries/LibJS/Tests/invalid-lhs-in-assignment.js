@@ -1,24 +1,26 @@
+load("test-common.js");
+
 try {
-    try {
-        Math.abs(-20) = 40;
-    } catch (e) {
-        assert(e.name === "ReferenceError");
-        assert(e.message === "Invalid left-hand side in assignment");
-    }
-
-    try {
+    assertThrowsError(() => {
         512 = 256;
-    } catch (e) {
-        assert(e.name === "ReferenceError");
-        assert(e.message === "Invalid left-hand side in assignment");
-    }
+    }, {
+        error: ReferenceError,
+        message: "Invalid left-hand side in assignment"
+    });
 
-    try {
+    assertThrowsError(() => {
+        512 = 256;
+    }, {
+        error: ReferenceError,
+        message: "Invalid left-hand side in assignment"
+    });
+
+    assertThrowsError(() => {
         "hello world" = "another thing?";
-    } catch (e) {
-        assert(e.name === "ReferenceError");
-        assert(e.message === "Invalid left-hand side in assignment");
-    }
+    }, {
+        error: ReferenceError,
+        message: "Invalid left-hand side in assignment"
+    });
 
     console.log("PASS");
 } catch (e) {

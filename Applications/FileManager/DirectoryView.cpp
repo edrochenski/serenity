@@ -27,6 +27,8 @@
 #include "DirectoryView.h"
 #include <AK/FileSystemPath.h>
 #include <AK/StringBuilder.h>
+#include <AK/URL.h>
+#include <LibCore/DesktopServices.h>
 #include <LibGUI/SortingProxyModel.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -68,60 +70,14 @@ void DirectoryView::handle_activation(const GUI::ModelIndex& index)
         return;
     }
 
-    ASSERT(!S_ISLNK(st.st_mode));
-
-    if (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) {
-        if (fork() == 0) {
-            int rc = execl(path.characters(), path.characters(), nullptr);
-            if (rc < 0)
-                perror("exec");
-            ASSERT_NOT_REACHED();
-        }
-        return;
-    }
-
-    if (path.to_lowercase().ends_with(".png")) {
-        if (fork() == 0) {
-            int rc = execl("/bin/qs", "/bin/qs", path.characters(), nullptr);
-            if (rc < 0)
-                perror("exec");
-            ASSERT_NOT_REACHED();
-        }
-        return;
-    }
-
-    if (path.to_lowercase().ends_with(".html")) {
-        if (fork() == 0) {
-            int rc = execl("/bin/Browser", "/bin/Browser", path.characters(), nullptr);
-            if (rc < 0)
-                perror("exec");
-            ASSERT_NOT_REACHED();
-        }
-        return;
-    }
-
-    if (path.to_lowercase().ends_with(".wav")) {
-        if (fork() == 0) {
-            int rc = execl("/bin/SoundPlayer", "/bin/SoundPlayer", path.characters(), nullptr);
-            if (rc < 0)
-                perror("exec");
-            ASSERT_NOT_REACHED();
-        }
-        return;
-    }
-
-    if (fork() == 0) {
-        int rc = execl("/bin/TextEditor", "/bin/TextEditor", path.characters(), nullptr);
-        if (rc < 0)
-            perror("exec");
-        ASSERT_NOT_REACHED();
-    }
-};
+    Core::DesktopServices::open(URL::create_with_file_protocol(path));
+}
 
 DirectoryView::DirectoryView()
     : m_model(GUI::FileSystemModel::create())
 {
     set_active_widget(nullptr);
+    set_content_margins({ 2, 2, 2, 2 });
     m_item_view = add<GUI::ItemView>();
     m_item_view->set_model(model());
 
@@ -136,9 +92,23 @@ DirectoryView::DirectoryView()
     m_item_view->set_model_column(GUI::FileSystemModel::Column::Name);
     m_columns_view->set_model_column(GUI::FileSystemModel::Column::Name);
 
-    m_model->on_root_path_change = [this] {
+    m_model->on_error = [this](int error, const char* error_string) {
+        bool quit = false;
+        if (m_path_history.size())
+            open(m_path_history.at(m_path_history_position));
+        else
+            quit = true;
+        
+        if (on_error)
+            on_error(error, error_string, quit);        
+    };
+
+    m_model->on_complete = [this] {
         m_table_view->selection().clear();
         m_item_view->selection().clear();
+
+        add_path_to_history(model().root_path());
+
         if (on_path_change)
             on_path_change(model().root_path());
     };
@@ -242,6 +212,9 @@ void DirectoryView::set_view_mode(ViewMode mode)
 
 void DirectoryView::add_path_to_history(const StringView& path)
 {
+    if (m_path_history.size() && m_path_history.at(m_path_history_position) == path)
+        return;
+
     if (m_path_history_position < m_path_history.size())
         m_path_history.resize(m_path_history_position + 1);
 
@@ -251,7 +224,10 @@ void DirectoryView::add_path_to_history(const StringView& path)
 
 void DirectoryView::open(const StringView& path)
 {
-    add_path_to_history(path);
+    if (model().root_path() == path) {
+        model().update();
+        return;
+    }
     model().set_root_path(path);
 }
 
@@ -264,7 +240,6 @@ void DirectoryView::set_status_message(const StringView& message)
 void DirectoryView::open_parent_directory()
 {
     auto path = String::format("%s/..", model().root_path().characters());
-    add_path_to_history(path);
     model().set_root_path(path);
 }
 

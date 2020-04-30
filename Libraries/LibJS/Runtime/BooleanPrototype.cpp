@@ -28,15 +28,15 @@
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/BooleanPrototype.h>
 #include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/GlobalObject.h>
 
 namespace JS {
 
 BooleanPrototype::BooleanPrototype()
-    : BooleanObject(false)
+    : BooleanObject(false, *interpreter().global_object().object_prototype())
 {
-    set_prototype(interpreter().object_prototype());
-    put_native_function("toString", to_string);
-    put_native_function("valueOf", value_of);
+    put_native_function("toString", to_string, 0, Attribute::Writable | Attribute::Configurable);
+    put_native_function("valueOf", value_of, 0, Attribute::Writable | Attribute::Configurable);
 }
 
 BooleanPrototype::~BooleanPrototype() {}

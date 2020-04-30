@@ -148,8 +148,10 @@ void WindowServerConnection::handle(const Messages::WindowClient::KeyDown& messa
 
     Action* action = nullptr;
 
-    if (auto* focused_widget = window->focused_widget())
-        action = focused_widget->action_for_key_event(*key_event);
+    if (auto* focused_widget = window->focused_widget()) {
+        for (auto* widget = focused_widget; widget && !action; widget = widget->parent_widget())
+            action = focused_widget->action_for_key_event(*key_event);
+    }
 
     if (!action)
         action = window->action_for_key_event(*key_event);
@@ -342,7 +344,14 @@ void WindowServerConnection::handle(const Messages::WindowClient::WindowStateCha
 
 void WindowServerConnection::handle(const Messages::WindowClient::DisplayLinkNotification&)
 {
-    DisplayLink::notify({});
+    if (m_display_link_notification_pending)
+        return;
+
+    m_display_link_notification_pending = true;
+    deferred_invoke([this](auto&) {
+        DisplayLink::notify({});
+        m_display_link_notification_pending = false;
+    });
 }
 
 }

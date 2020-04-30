@@ -1,8 +1,10 @@
-try {
-  assert(typeof Boolean.prototype === "object");
-  assert(Boolean.prototype.valueOf() === false);
+load("test-common.js");
 
-  console.log("PASS");
+try {
+    assert(typeof Boolean.prototype === "object");
+    assert(Boolean.prototype.valueOf() === false);
+
+    console.log("PASS");
 } catch (err) {
-  console.log("FAIL: " + err);
+    console.log("FAIL: " + err);
 }

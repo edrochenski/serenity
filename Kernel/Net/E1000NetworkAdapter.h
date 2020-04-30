@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <AK/NonnullOwnPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <Kernel/Interrupts/IRQHandler.h>
 #include <Kernel/Net/NetworkAdapter.h>
@@ -96,15 +97,15 @@ private:
     VirtualAddress m_mmio_base;
     OwnPtr<Region> m_rx_descriptors_region;
     OwnPtr<Region> m_tx_descriptors_region;
-    Vector<OwnPtr<Region>> m_rx_buffers_regions;
-    Vector<OwnPtr<Region>> m_tx_buffers_regions;
+    NonnullOwnPtrVector<Region> m_rx_buffers_regions;
+    NonnullOwnPtrVector<Region> m_tx_buffers_regions;
     OwnPtr<Region> m_mmio_region;
     u8 m_interrupt_line { 0 };
     bool m_has_eeprom { false };
     bool m_use_mmio { false };
 
-    static const int number_of_rx_descriptors = 32;
-    static const int number_of_tx_descriptors = 8;
+    static const size_t number_of_rx_descriptors = 32;
+    static const size_t number_of_tx_descriptors = 8;
 
     WaitQueue m_wait_queue;
 };

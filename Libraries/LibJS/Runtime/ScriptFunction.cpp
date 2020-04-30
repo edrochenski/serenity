@@ -28,22 +28,55 @@
 #include <LibJS/AST.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/ScriptFunction.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
 
-ScriptFunction::ScriptFunction(const FlyString& name, const Statement& body, Vector<FlyString> parameters)
-    : m_name(name)
+ScriptFunction* ScriptFunction::create(GlobalObject& global_object, const FlyString& name, const Statement& body, Vector<FlyString> parameters, LexicalEnvironment* parent_environment)
+{
+    return global_object.heap().allocate<ScriptFunction>(name, body, move(parameters), parent_environment, *global_object.function_prototype());
+}
+
+ScriptFunction::ScriptFunction(const FlyString& name, const Statement& body, Vector<FlyString> parameters, LexicalEnvironment* parent_environment, Object& prototype)
+    : Function(prototype)
+    , m_name(name)
     , m_body(body)
     , m_parameters(move(parameters))
+    , m_parent_environment(parent_environment)
 {
-    put("prototype", heap().allocate<Object>());
-    put_native_property("length", length_getter, length_setter);
+    put("prototype", Object::create_empty(interpreter(), interpreter().global_object()), 0);
+    put_native_property("length", length_getter, length_setter, Attribute::Configurable);
 }
 
 ScriptFunction::~ScriptFunction()
 {
+}
+
+void ScriptFunction::visit_children(Visitor& visitor)
+{
+    Function::visit_children(visitor);
+    visitor.visit(m_parent_environment);
+}
+
+LexicalEnvironment* ScriptFunction::create_environment()
+{
+    HashMap<FlyString, Variable> variables;
+    for (auto& parameter : m_parameters) {
+        variables.set(parameter, { js_undefined(), DeclarationKind::Var });
+    }
+
+    if (body().is_scope_node()) {
+        for (auto& declaration : static_cast<const ScopeNode&>(body()).variables()) {
+            for (auto& declarator : declaration.declarations()) {
+                variables.set(declarator.id().string(), { js_undefined(), DeclarationKind::Var });
+            }
+        }
+    }
+    if (variables.is_empty())
+        return m_parent_environment;
+    return heap().allocate<LexicalEnvironment>(move(variables), m_parent_environment);
 }
 
 Value ScriptFunction::call(Interpreter& interpreter)
@@ -55,7 +88,8 @@ Value ScriptFunction::call(Interpreter& interpreter)
         auto value = js_undefined();
         if (i < argument_values.size())
             value = argument_values[i];
-        arguments.append({ move(name), move(value) });
+        arguments.append({ name, value });
+        interpreter.current_environment()->set(name, { value, DeclarationKind::Var });
     }
     return interpreter.run(m_body, arguments, ScopeType::Function);
 }

@@ -29,6 +29,7 @@
 #include <LibGUI/MessageBox.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Function.h>
+#include <LibJS/Runtime/MarkedValueList.h>
 #include <LibWeb/DOM/Window.h>
 
 namespace Web {
@@ -52,12 +53,18 @@ void Window::alert(const String& message)
     GUI::MessageBox::show(message, "Alert", GUI::MessageBox::Type::Information);
 }
 
+bool Window::confirm(const String& message)
+{
+    auto confirm_result = GUI::MessageBox::show(message, "Confirm", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OKCancel);
+    return confirm_result == GUI::Dialog::ExecResult::ExecOK;
+}
+
 void Window::set_interval(JS::Function& callback, i32 interval)
 {
     // FIXME: This leaks the interval timer and makes it unstoppable.
     (void)Core::Timer::construct(interval, [handle = make_handle(&callback)] {
-        auto* function = const_cast<JS::Function*>(static_cast<const JS::Function*>(handle.cell()));
-        auto& interpreter = function->interpreter();
+        auto& function = const_cast<JS::Function&>(static_cast<const JS::Function&>(*handle.cell()));
+        auto& interpreter = function.interpreter();
         interpreter.call(function);
     }).leak_ref();
 }
@@ -66,8 +73,8 @@ void Window::set_timeout(JS::Function& callback, i32 interval)
 {
     // FIXME: This leaks the interval timer and makes it unstoppable.
     auto& timer = Core::Timer::construct(interval, [handle = make_handle(&callback)] {
-        auto* function = const_cast<JS::Function*>(static_cast<const JS::Function*>(handle.cell()));
-        auto& interpreter = function->interpreter();
+        auto& function = const_cast<JS::Function&>(static_cast<const JS::Function&>(*handle.cell()));
+        auto& interpreter = function.interpreter();
         interpreter.call(function);
     }).leak_ref();
     timer.set_single_shot(true);
@@ -75,10 +82,16 @@ void Window::set_timeout(JS::Function& callback, i32 interval)
 
 i32 Window::request_animation_frame(JS::Function& callback)
 {
+    // FIXME: This is extremely fake!
+    static double fake_timestamp = 0;
+
     i32 link_id = GUI::DisplayLink::register_callback([handle = make_handle(&callback)](i32 link_id) {
-        auto* function = const_cast<JS::Function*>(static_cast<const JS::Function*>(handle.cell()));
-        auto& interpreter = function->interpreter();
-        interpreter.call(function);
+        auto& function = const_cast<JS::Function&>(static_cast<const JS::Function&>(*handle.cell()));
+        auto& interpreter = function.interpreter();
+        JS::MarkedValueList arguments(interpreter.heap());
+        arguments.append(JS::Value(fake_timestamp));
+        fake_timestamp += 10;
+        interpreter.call(function, {}, move(arguments));
         GUI::DisplayLink::unregister_callback(link_id);
     });
 

@@ -2,6 +2,7 @@ OBJS = \
     ArgsParser.o \
     ConfigFile.o \
     DateTime.o \
+    DesktopServices.o \
     DirIterator.o \
     ElapsedTimer.o \
     Event.o \
@@ -22,12 +23,12 @@ OBJS = \
     ProcessStatisticsReader.o \
     Socket.o \
     SocketAddress.o \
+    StandardPaths.o \
     TCPServer.o \
     TCPSocket.o \
     Timer.o \
     UDPServer.o \
     UDPSocket.o \
-    UserInfo.o \
     puff.o
 
 LIBRARY = libcore.a

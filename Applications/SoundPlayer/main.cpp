@@ -64,7 +64,7 @@ int main(int argc, char** argv)
     window->set_rect(300, 300, 350, 140);
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-sound-player.png"));
 
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
     auto& app_menu = menubar->add_menu("SoundPlayer");
     auto& player = window->set_main_widget<SoundPlayerWidget>(window, audio_client);
 
@@ -74,11 +74,9 @@ int main(int argc, char** argv)
         player.manager().play();
     }
 
-    auto hide_scope = GUI::Action::create("Hide scope", { Mod_Ctrl, Key_H }, [&](GUI::Action& action) {
-        action.set_checked(!action.is_checked());
+    auto hide_scope = GUI::Action::create_checkable("Hide scope", { Mod_Ctrl, Key_H }, [&](auto& action) {
         player.hide_scope(action.is_checked());
     });
-    hide_scope->set_checkable(true);
 
     app_menu.add_action(GUI::CommonActions::make_open_action([&](auto&) {
         Optional<String> path = GUI::FilePicker::get_open_filepath("Open wav file...");

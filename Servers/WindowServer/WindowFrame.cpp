@@ -154,7 +154,7 @@ Gfx::Rect WindowFrame::title_bar_rect() const
 {
     if (m_window.type() == WindowType::Notification)
         return { m_window.width() + 3, 3, window_titlebar_height, m_window.height() };
-    return { 3, 3, m_window.width(), window_titlebar_height };
+    return { 4, 4, m_window.width(), window_titlebar_height };
 }
 
 Gfx::Rect WindowFrame::title_bar_icon_rect() const
@@ -233,6 +233,7 @@ void WindowFrame::paint_normal_frame(Gfx::Painter& painter)
 
     auto& wm = WindowManager::the();
     painter.draw_line(titlebar_rect.bottom_left().translated(0, 1), titlebar_rect.bottom_right().translated(0, 1), palette.button());
+    painter.draw_line(titlebar_rect.bottom_left().translated(0, 2), titlebar_rect.bottom_right().translated(0, 2), palette.button());
 
     auto leftmost_button_rect = m_buttons.is_empty() ? Gfx::Rect() : m_buttons.last().relative_rect();
 
@@ -282,10 +283,10 @@ static Gfx::Rect frame_rect_for_window(Window& window, const Gfx::Rect& rect)
     switch (type) {
     case WindowType::Normal:
         return {
-            rect.x() - 3,
-            rect.y() - window_titlebar_height - 4 + offset,
-            rect.width() + 6,
-            rect.height() + 7 + window_titlebar_height - offset
+            rect.x() - 4,
+            rect.y() - window_titlebar_height - 6 + offset,
+            rect.width() + 8,
+            rect.height() + 10 + window_titlebar_height - offset
         };
     case WindowType::Notification:
         return {
@@ -357,15 +358,15 @@ void WindowFrame::on_mouse_event(const MouseEvent& event)
 
     if (m_window.type() == WindowType::Normal && event.type() == Event::MouseDown && (event.button() == MouseButton::Left || event.button() == MouseButton::Right) && title_bar_icon_rect().contains(event.position())) {
         wm.move_to_front_and_make_active(m_window);
-        m_window.popup_window_menu(event.position().translated(rect().location()));
+        m_window.popup_window_menu(title_bar_icon_rect().bottom_left().translated(rect().location()));
         return;
     }
 
-    // This is slightly hackish, but expand the title bar rect by one pixel downwards,
+    // This is slightly hackish, but expand the title bar rect by two pixels downwards,
     // so that mouse events between the title bar and window contents don't act like
     // mouse events on the border.
     auto adjusted_title_bar_rect = title_bar_rect();
-    adjusted_title_bar_rect.set_height(adjusted_title_bar_rect.height() + 1);
+    adjusted_title_bar_rect.set_height(adjusted_title_bar_rect.height() + 2);
 
     if (adjusted_title_bar_rect.contains(event.position())) {
         wm.clear_resize_candidate();

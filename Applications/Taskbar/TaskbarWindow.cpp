@@ -28,7 +28,7 @@
 #include "TaskbarButton.h"
 #include <AK/SharedBuffer.h>
 #include <LibCore/ConfigFile.h>
-#include <LibCore/UserInfo.h>
+#include <LibCore/StandardPaths.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/Desktop.h>
@@ -76,9 +76,7 @@ void TaskbarWindow::create_quick_launch_bar()
     quick_launch_bar.set_layout<GUI::HorizontalBoxLayout>();
     quick_launch_bar.layout()->set_spacing(3);
     quick_launch_bar.layout()->set_margins({ 3, 0, 3, 0 });
-    quick_launch_bar.set_frame_thickness(1);
-    quick_launch_bar.set_frame_shape(Gfx::FrameShape::Container);
-    quick_launch_bar.set_frame_shadow(Gfx::FrameShadow::Raised);
+    quick_launch_bar.set_frame_thickness(0);
 
     int total_width = 6;
     bool first = true;
@@ -107,7 +105,7 @@ void TaskbarWindow::create_quick_launch_bar()
             if (pid < 0) {
                 perror("fork");
             } else if (pid == 0) {
-                if (chdir(get_current_user_home_path().characters()) < 0) {
+                if (chdir(Core::StandardPaths::home_directory().characters()) < 0) {
                     perror("chdir");
                     exit(1);
                 }

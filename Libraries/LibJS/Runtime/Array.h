@@ -30,16 +30,16 @@
 
 namespace JS {
 
+Array* array_from(Interpreter&);
+
 class Array final : public Object {
 public:
-    Array();
+    static Array* create(GlobalObject&);
+
+    explicit Array(Object& prototype);
     virtual ~Array() override;
 
     i32 length() const { return static_cast<i32>(elements().size()); }
-
-    Value shift();
-    Value pop();
-    void push(Value);
 
 private:
     virtual const char* class_name() const override { return "Array"; }

@@ -60,6 +60,7 @@ public:
     NonnullRefPtr<BreakStatement> parse_break_statement();
     NonnullRefPtr<ContinueStatement> parse_continue_statement();
     NonnullRefPtr<DoWhileStatement> parse_do_while_statement();
+    NonnullRefPtr<WhileStatement> parse_while_statement();
     NonnullRefPtr<ConditionalExpression> parse_conditional_expression(NonnullRefPtr<Expression> test);
 
     NonnullRefPtr<Expression> parse_expression(int min_precedence, Associativity associate = Associativity::Right);
@@ -72,9 +73,11 @@ public:
     NonnullRefPtr<NewExpression> parse_new_expression();
     RefPtr<FunctionExpression> try_parse_arrow_function_expression(bool expect_parens);
 
-    bool has_errors() const { return m_parser_state.m_has_errors; }
+    bool has_errors() const { return m_parser_state.m_lexer.has_errors() || m_parser_state.m_has_errors; }
 
 private:
+    friend class ScopePusher;
+
     int operator_precedence(TokenType) const;
     Associativity operator_associativity(TokenType) const;
     bool match_expression() const;
@@ -82,11 +85,14 @@ private:
     bool match_secondary_expression() const;
     bool match_statement() const;
     bool match_variable_declaration() const;
+    bool match_identifier_name() const;
     bool match(TokenType type) const;
     bool done() const;
     void expected(const char* what);
+    void syntax_error(const String& message, size_t line = 0, size_t column = 0);
     Token consume();
     Token consume(TokenType type);
+    void consume_or_insert_semicolon();
     void save_state();
     void load_state();
 
@@ -94,6 +100,8 @@ private:
         Lexer m_lexer;
         Token m_current_token;
         bool m_has_errors = false;
+        Vector<NonnullRefPtrVector<VariableDeclaration>> m_var_scopes;
+        Vector<NonnullRefPtrVector<VariableDeclaration>> m_let_scopes;
 
         explicit ParserState(Lexer);
     };

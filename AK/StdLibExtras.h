@@ -82,14 +82,6 @@ inline T&& move(T& arg)
 #endif
 
 template<typename T, typename U>
-inline T exchange(T& a, U&& b)
-{
-    T tmp = move(a);
-    a = move(b);
-    return tmp;
-}
-
-template<typename T, typename U>
 inline void swap(T& a, U& b)
 {
     U tmp = move((U&)a);
@@ -316,6 +308,68 @@ inline constexpr T&& forward(typename RemoveReference<T>::Type&& param) noexcept
     return static_cast<T&&>(param);
 }
 
+template<typename T>
+struct MakeUnsigned {
+};
+
+template<>
+struct MakeUnsigned<char> {
+    typedef unsigned char type;
+};
+
+template<>
+struct MakeUnsigned<short> {
+    typedef unsigned short type;
+};
+
+template<>
+struct MakeUnsigned<int> {
+    typedef unsigned type;
+};
+
+template<>
+struct MakeUnsigned<long> {
+    typedef unsigned long type;
+};
+
+template<>
+struct MakeUnsigned<long long> {
+    typedef unsigned long long type;
+};
+
+template<>
+struct MakeUnsigned<unsigned char> {
+    typedef unsigned char type;
+};
+
+template<>
+struct MakeUnsigned<unsigned short> {
+    typedef unsigned short type;
+};
+
+template<>
+struct MakeUnsigned<unsigned int> {
+    typedef unsigned type;
+};
+
+template<>
+struct MakeUnsigned<unsigned long> {
+    typedef unsigned long type;
+};
+
+template<>
+struct MakeUnsigned<unsigned long long> {
+    typedef unsigned long long type;
+};
+
+template<typename T, typename U = T>
+inline constexpr T exchange(T& slot, U&& value)
+{
+    T old_value = move(slot);
+    slot = forward<U>(value);
+    return old_value;
+}
+
 }
 
 using AK::ceil_div;
@@ -324,6 +378,7 @@ using AK::Conditional;
 using AK::exchange;
 using AK::forward;
 using AK::IsSame;
+using AK::MakeUnsigned;
 using AK::max;
 using AK::min;
 using AK::move;

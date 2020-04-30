@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -38,10 +39,24 @@ public:
 private:
     virtual const char* class_name() const override { return "ArrayPrototype"; }
 
+    static Value filter(Interpreter&);
+    static Value for_each(Interpreter&);
+    static Value map(Interpreter&);
+    static Value pop(Interpreter&);
     static Value push(Interpreter&);
     static Value shift(Interpreter&);
-    static Value pop(Interpreter&);
     static Value to_string(Interpreter&);
+    static Value unshift(Interpreter&);
+    static Value join(Interpreter&);
+    static Value concat(Interpreter&);
+    static Value slice(Interpreter&);
+    static Value index_of(Interpreter&);
+    static Value reverse(Interpreter&);
+    static Value last_index_of(Interpreter&);
+    static Value includes(Interpreter&);
+    static Value find(Interpreter&);
+    static Value find_index(Interpreter&);
+    static Value some(Interpreter&);
 };
 
 }

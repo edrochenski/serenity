@@ -39,11 +39,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
 
 extern "C" {
+
+static __thread int s_cached_tid = 0;
 
 int chown(const char* pathname, uid_t uid, gid_t gid)
 {
@@ -65,6 +68,8 @@ int fchown(int fd, uid_t uid, gid_t gid)
 pid_t fork()
 {
     int rc = syscall(SC_fork);
+    if (rc == 0)
+        s_cached_tid = 0;
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
@@ -347,6 +352,12 @@ int gethostname(char* buffer, size_t size)
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
+int sethostname(const char* hostname, ssize_t size)
+{
+    int rc = syscall(SC_sethostname, hostname, size);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
 ssize_t readlink(const char* path, char* buffer, size_t size)
 {
     Syscall::SC_readlink_params params { { path, strlen(path) }, { buffer, size } };
@@ -533,7 +544,7 @@ char* getlogin()
 {
     static char __getlogin_buffer[256];
     if (auto* passwd = getpwuid(getuid())) {
-        strncpy(__getlogin_buffer, passwd->pw_name, sizeof(__getlogin_buffer));
+        strncpy(__getlogin_buffer, passwd->pw_name, sizeof(__getlogin_buffer) - 1);
         endpwent();
         return __getlogin_buffer;
     }
@@ -549,7 +560,9 @@ int ftruncate(int fd, off_t length)
 
 int gettid()
 {
-    return syscall(SC_gettid);
+    if (!s_cached_tid)
+        s_cached_tid = syscall(SC_gettid);
+    return s_cached_tid;
 }
 
 int donate(int tid)

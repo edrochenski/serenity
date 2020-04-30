@@ -50,7 +50,23 @@ struct servent {
     char* s_proto;
 };
 
+struct servent* getservent();
 struct servent* getservbyname(const char* name, const char* protocol);
+struct servent* getservbyport(int port, const char* protocol);
+void setservent(int stay_open);
+void endservent();
+
+struct protoent {
+    char* p_name;
+    char** p_aliases;
+    int p_proto;
+};
+
+void endprotoent();
+struct protoent* getprotobyname(const char* name);
+struct protoent* getprotobynumber(int proto);
+struct protoent* getprotoent();
+void setprotoent(int stay_open);
 
 extern int h_errno;
 

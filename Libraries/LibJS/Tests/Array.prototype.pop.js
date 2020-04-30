@@ -1,3 +1,5 @@
+load("test-common.js");
+
 try {
     var a = [1, 2, 3];
     var value = a.pop();
@@ -10,6 +12,8 @@ try {
     var value = a.pop();
     assert(value === undefined);
     assert(a.length === 0);
+
+    assert([,].pop() === undefined);
 
     console.log("PASS");
 } catch (e) {

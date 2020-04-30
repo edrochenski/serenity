@@ -66,6 +66,7 @@ Lexer::Lexer(StringView source)
         s_keywords.set("null", TokenType::NullLiteral);
         s_keywords.set("return", TokenType::Return);
         s_keywords.set("switch", TokenType::Switch);
+        s_keywords.set("this", TokenType::This);
         s_keywords.set("throw", TokenType::Throw);
         s_keywords.set("true", TokenType::BoolLiteral);
         s_keywords.set("try", TokenType::Try);
@@ -83,6 +84,7 @@ Lexer::Lexer(StringView source)
         s_three_char_tokens.set("<<=", TokenType::ShiftLeftEquals);
         s_three_char_tokens.set(">>=", TokenType::ShiftRightEquals);
         s_three_char_tokens.set(">>>", TokenType::UnsignedShiftRight);
+        s_three_char_tokens.set("...", TokenType::TripleDot);
     }
 
     if (s_two_char_tokens.is_empty()) {
@@ -166,6 +168,36 @@ void Lexer::consume_exponent()
     }
 }
 
+bool Lexer::match(char a, char b) const
+{
+    if (m_position >= m_source.length())
+        return false;
+
+    return m_current_char == a
+        && m_source[m_position] == b;
+}
+
+bool Lexer::match(char a, char b, char c) const
+{
+    if (m_position + 1 >= m_source.length())
+        return false;
+
+    return m_current_char == a
+        && m_source[m_position] == b
+        && m_source[m_position + 1] == c;
+}
+
+bool Lexer::match(char a, char b, char c, char d) const
+{
+    if (m_position + 2 >= m_source.length())
+        return false;
+
+    return m_current_char == a
+        && m_source[m_position] == b
+        && m_source[m_position + 1] == c
+        && m_source[m_position + 2] == d;
+}
+
 bool Lexer::is_eof() const
 {
     return m_current_char == EOF;
@@ -183,17 +215,17 @@ bool Lexer::is_identifier_middle() const
 
 bool Lexer::is_line_comment_start() const
 {
-    return m_current_char == '/' && m_position < m_source.length() && m_source[m_position] == '/';
+    return match('/', '/') || match('<', '!', '-', '-') || match('-', '-', '>');
 }
 
 bool Lexer::is_block_comment_start() const
 {
-    return m_current_char == '/' && m_position < m_source.length() && m_source[m_position] == '*';
+    return match('/', '*');
 }
 
 bool Lexer::is_block_comment_end() const
 {
-    return m_current_char == '*' && m_position < m_source.length() && m_source[m_position] == '/';
+    return match('*', '/');
 }
 
 bool Lexer::is_numeric_literal_start() const
@@ -306,7 +338,7 @@ Token Lexer::next()
             }
         }
         token_type = TokenType::NumericLiteral;
-    } else if (m_current_char == '"' || m_current_char == '\'') {
+    } else if (m_current_char == '"' || m_current_char == '\'' || m_current_char == '`') {
         char stop_char = m_current_char;
         consume();
         while (m_current_char != stop_char && m_current_char != '\n' && !is_eof()) {
@@ -320,26 +352,23 @@ Token Lexer::next()
             token_type = TokenType::UnterminatedStringLiteral;
         } else {
             consume();
-            token_type = TokenType::StringLiteral;
+            if (stop_char == '`')
+                token_type = TokenType::TemplateLiteral;
+            else
+                token_type = TokenType::StringLiteral;
         }
     } else if (m_current_char == EOF) {
         token_type = TokenType::Eof;
     } else {
         // There is only one four-char operator: >>>=
         bool found_four_char_token = false;
-        if (m_position + 2 < m_source.length()) {
-            if (m_current_char == '>'
-                && m_source[m_position] == '>'
-                && m_source[m_position + 1] == '>'
-                && m_source[m_position + 2] == '=') {
-
-                found_four_char_token = true;
-                consume();
-                consume();
-                consume();
-                consume();
-                token_type = TokenType::UnsignedShiftRightEquals;
-            }
+        if (match('>', '>', '>', '=')) {
+            found_four_char_token = true;
+            consume();
+            consume();
+            consume();
+            consume();
+            token_type = TokenType::UnsignedShiftRightEquals;
         }
 
         bool found_three_char_token = false;

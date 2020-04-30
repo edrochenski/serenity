@@ -42,6 +42,7 @@ class ImageDecoder;
 class Painter;
 class Palette;
 class PaletteImpl;
+class Path;
 class Point;
 class Rect;
 class ShareableBitmap;

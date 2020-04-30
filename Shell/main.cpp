@@ -50,7 +50,7 @@
 //#define SH_DEBUG
 
 GlobalState g;
-static Line::Editor editor {};
+static Line::Editor editor { Line::Configuration { Line::Configuration::UnescapedSpaces } };
 
 static int run_command(const String&);
 void cache_path();
@@ -580,7 +580,7 @@ static bool handle_builtin(int argc, const char** argv, int& retval)
 
 class FileDescriptionCollector {
 public:
-    FileDescriptionCollector() {}
+    FileDescriptionCollector() { }
     ~FileDescriptionCollector() { collect(); }
 
     void collect()
@@ -905,10 +905,16 @@ static int run_command(const String& cmd)
 
                 int rc = execvp(argv[0], const_cast<char* const*>(argv.data()));
                 if (rc < 0) {
-                    if (errno == ENOENT)
+                    if (errno == ENOENT) {
                         fprintf(stderr, "%s: Command not found.\n", argv[0]);
-                    else
+                    } else {
+                        struct stat st;
+                        if (stat(argv[0], &st) == 0 && S_ISDIR(st.st_mode)) {
+                            fprintf(stderr, "Shell: %s: Is a directory\n", argv[0]);
+                            _exit(126);
+                        }
                         fprintf(stderr, "execvp(%s): %s\n", argv[0], strerror(errno));
+                    }
                     _exit(1);
                 }
                 ASSERT_NOT_REACHED();
@@ -987,13 +993,70 @@ void load_history()
 
 void save_history()
 {
-    auto history_file = Core::File::open(get_history_path(), Core::IODevice::WriteOnly, 0600);
-    if (!history_file)
+    auto file_or_error = Core::File::open(get_history_path(), Core::IODevice::WriteOnly, 0600);
+    if (file_or_error.is_error())
         return;
+    auto& file = *file_or_error.value();
     for (const auto& line : editor.history()) {
-        history_file->write(line);
-        history_file->write("\n");
+        file.write(line);
+        file.write("\n");
     }
+}
+
+String escape_token(const String& token)
+{
+    StringBuilder builder;
+
+    for (auto c : token) {
+        switch (c) {
+        case '\'':
+        case '"':
+        case '$':
+        case '|':
+        case '>':
+        case '<':
+        case '&':
+        case '\\':
+        case ' ':
+            builder.append('\\');
+            break;
+        default:
+            break;
+        }
+        builder.append(c);
+    }
+
+    return builder.build();
+}
+
+String unescape_token(const String& token)
+{
+    StringBuilder builder;
+
+    enum {
+        Free,
+        Escaped
+    } state { Free };
+
+    for (auto c : token) {
+        switch (state) {
+        case Escaped:
+            builder.append(c);
+            state = Free;
+            break;
+        case Free:
+            if (c == '\\')
+                state = Escaped;
+            else
+                builder.append(c);
+            break;
+        }
+    }
+
+    if (state == Escaped)
+        builder.append('\\');
+
+    return builder.build();
 }
 
 Vector<String, 256> cached_path;
@@ -1012,10 +1075,8 @@ void cache_path()
         while (programs.has_next()) {
             auto program = programs.next_path();
             String program_path = String::format("%s/%s", directory.characters(), program.characters());
-            struct stat program_status;
-            int stat_error = stat(program_path.characters(), &program_status);
-            if (!stat_error && (program_status.st_mode & S_IXUSR))
-                cached_path.append(program.characters());
+            if (access(program_path.characters(), X_OK) == 0)
+                cached_path.append(escape_token(program.characters()));
         }
     }
 
@@ -1036,51 +1097,103 @@ int main(int argc, char** argv)
     g.termios = editor.termios();
     g.default_termios = editor.default_termios();
 
-    editor.on_tab_complete_first_token = [&](const String& token) -> Vector<String> {
+    editor.on_tab_complete_first_token = [&](const String& token_to_complete) -> Vector<Line::CompletionSuggestion> {
+        auto token = unescape_token(token_to_complete);
+
         auto match = binary_search(cached_path.data(), cached_path.size(), token, [](const String& token, const String& program) -> int {
             return strncmp(token.characters(), program.characters(), token.length());
         });
-        if (!match)
-            return {};
+
+        if (!match) {
+            // There is no executable in the $PATH starting with $token
+            // Suggest local executables and directories
+            String path;
+            Vector<Line::CompletionSuggestion> local_suggestions;
+            bool suggest_executables = true;
+
+            ssize_t last_slash = token.length() - 1;
+            while (last_slash >= 0 && token[last_slash] != '/')
+                --last_slash;
+
+            if (last_slash >= 0) {
+                // Split on the last slash. We'll use the first part as the directory
+                // to search and the second part as the token to complete.
+                path = token.substring(0, last_slash + 1);
+                if (path[0] != '/')
+                    path = String::format("%s/%s", g.cwd.characters(), path.characters());
+                path = canonicalized_path(path);
+                token = token.substring(last_slash + 1, token.length() - last_slash - 1);
+            } else {
+                // We have no slashes, so the directory to search is the current
+                // directory and the token to complete is just the original token.
+                // In this case, do not suggest executables but directories only.
+                path = g.cwd;
+                suggest_executables = false;
+            }
+
+            // the invariant part of the token is actually just the last segment
+            // e.g. in `cd /foo/bar', 'bar' is the invariant
+            //      since we are not suggesting anything starting with
+            //      `/foo/', but rather just `bar...'
+            editor.suggest(escape_token(token).length(), 0);
+
+            // only suggest dot-files if path starts with a dot
+            Core::DirIterator files(path,
+                token.starts_with('.') ? Core::DirIterator::NoFlags : Core::DirIterator::SkipDots);
+
+            while (files.has_next()) {
+                auto file = files.next_path();
+                // manually skip `.' and `..'
+                if (file == "." || file == "..")
+                    continue;
+                auto trivia = " ";
+                if (file.starts_with(token)) {
+                    String file_path = String::format("%s/%s", path.characters(), file.characters());
+                    struct stat program_status;
+                    int stat_error = stat(file_path.characters(), &program_status);
+                    if (stat_error)
+                        continue;
+                    if (access(file_path.characters(), X_OK) != 0)
+                        continue;
+                    if (S_ISDIR(program_status.st_mode)) {
+                        if (!suggest_executables)
+                            continue;
+                        else
+                            trivia = "/";
+                    }
+
+                    local_suggestions.append({ escape_token(file), trivia });
+                }
+            }
+
+            return local_suggestions;
+        }
 
         String completion = *match;
-        Vector<String> suggestions;
+        Vector<Line::CompletionSuggestion> suggestions;
 
         // Now that we have a program name starting with our token, we look at
         // other program names starting with our token and cut off any mismatching
         // characters.
 
-        bool seen_others = false;
         int index = match - cached_path.data();
         for (int i = index - 1; i >= 0 && cached_path[i].starts_with(token); --i) {
-            suggestions.append(cached_path[i]);
-            seen_others = true;
+            suggestions.append({ cached_path[i], " " });
         }
         for (size_t i = index + 1; i < cached_path.size() && cached_path[i].starts_with(token); ++i) {
-            suggestions.append(cached_path[i]);
-            seen_others = true;
+            suggestions.append({ cached_path[i], " " });
         }
-        suggestions.append(cached_path[index]);
+        suggestions.append({ cached_path[index], " " });
 
-        // If we have a single match, we add a space, unless we already have one.
-        if (!seen_others && (editor.cursor() == editor.buffer().size() || editor.buffer_at(editor.cursor()) != ' ')) {
-            suggestions[0] = String::format("%s ", suggestions[0].characters());
-        }
-
-        dbg() << "found " << suggestions.size() << " elements";
-        for (auto& el : suggestions)
-            dbg() << ">>> '" << el << "'";
-
-        editor.suggest(token.length(), 0);
+        editor.suggest(escape_token(token).length(), 0);
 
         return suggestions;
     };
-    editor.on_tab_complete_other_token = [&](const String& vtoken) -> Vector<String> {
-        auto token = vtoken; // copy it :(
+    editor.on_tab_complete_other_token = [&](const String& token_to_complete) -> Vector<Line::CompletionSuggestion> {
+        auto token = unescape_token(token_to_complete);
         String path;
-        Vector<String> suggestions;
+        Vector<Line::CompletionSuggestion> suggestions;
 
-        editor.suggest(token.length(), 0);
         ssize_t last_slash = token.length() - 1;
         while (last_slash >= 0 && token[last_slash] != '/')
             --last_slash;
@@ -1099,57 +1212,35 @@ int main(int argc, char** argv)
             path = g.cwd;
         }
 
-        // This is a bit naughty, but necessary without reordering the loop
-        // below. The loop terminates early, meaning that
-        // the suggestions list is incomplete.
-        // We only do this if the token is empty though.
-        if (token.is_empty()) {
-            Core::DirIterator suggested_files(path, Core::DirIterator::SkipDots);
-            while (suggested_files.has_next()) {
-                suggestions.append(suggested_files.next_path());
-            }
-        }
+        // the invariant part of the token is actually just the last segment
+        // e.g. in `cd /foo/bar', 'bar' is the invariant
+        //      since we are not suggesting anything starting with
+        //      `/foo/', but rather just `bar...'
+        editor.suggest(escape_token(token).length(), 0);
 
-        String completion;
+        // only suggest dot-files if path starts with a dot
+        Core::DirIterator files(path,
+            token.starts_with('.') ? Core::DirIterator::NoFlags : Core::DirIterator::SkipDots);
 
-        bool seen_others = false;
-        Core::DirIterator files(path, Core::DirIterator::SkipDots);
         while (files.has_next()) {
             auto file = files.next_path();
+            // manually skip `.' and `..'
+            if (file == "." || file == "..")
+                continue;
             if (file.starts_with(token)) {
-                if (!token.is_empty())
-                    suggestions.append(file);
-                if (completion.is_empty()) {
-                    completion = file; // Will only be set once.
-                } else {
-                    editor.cut_mismatching_chars(completion, file, token.length());
-                    if (completion.is_empty()) // We cut everything off!
-                        return suggestions;
-                    seen_others = true;
+                struct stat program_status;
+                String file_path = String::format("%s/%s", path.characters(), file.characters());
+                int stat_error = stat(file_path.characters(), &program_status);
+                if (!stat_error) {
+                    if (S_ISDIR(program_status.st_mode))
+                        suggestions.append({ escape_token(file), "/" });
+                    else
+                        suggestions.append({ escape_token(file), " " });
                 }
             }
         }
-        if (completion.is_empty())
-            return suggestions;
 
-        // If we have characters to add, add them.
-        if (completion.length() > token.length())
-            editor.insert(completion.substring(token.length(), completion.length() - token.length()));
-        // If we have a single match and it's a directory, we add a slash. If it's
-        // a regular file, we add a space, unless we already have one.
-        if (!seen_others) {
-            String file_path = String::format("%s/%s", path.characters(), completion.characters());
-            struct stat program_status;
-            int stat_error = stat(file_path.characters(), &program_status);
-            if (!stat_error) {
-                if (S_ISDIR(program_status.st_mode))
-                    editor.insert('/');
-                else if (editor.cursor() == editor.buffer().size() || editor.buffer_at(editor.cursor()) != ' ')
-                    editor.insert(' ');
-            }
-        }
-
-        return {}; // Return an empty vector
+        return suggestions;
     };
 
     signal(SIGINT, [](int) {

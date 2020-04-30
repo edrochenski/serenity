@@ -67,6 +67,18 @@ struct [[gnu::packed]] PaletteEntry
     //u8 a;
 };
 
+struct [[gnu::packed]] Tuple
+{
+    u8 gray;
+    u8 a;
+};
+
+struct [[gnu::packed]] Tuple16
+{
+    u16 gray;
+    u16 a;
+};
+
 struct [[gnu::packed]] Triplet
 {
     u8 r;
@@ -192,7 +204,7 @@ RefPtr<Gfx::Bitmap> load_png_from_memory(const u8* data, size_t length)
     return bitmap;
 }
 
-[[gnu::always_inline]] static inline u8 paeth_predictor(int a, int b, int c)
+ALWAYS_INLINE static u8 paeth_predictor(int a, int b, int c)
 {
     int p = a + b - c;
     int pa = abs(p - a);
@@ -219,7 +231,7 @@ union [[gnu::packed]] Pixel
 static_assert(sizeof(Pixel) == 4);
 
 template<bool has_alpha, u8 filter_type>
-[[gnu::always_inline]] static inline void unfilter_impl(Gfx::Bitmap& bitmap, int y, const void* dummy_scanline_data)
+ALWAYS_INLINE static void unfilter_impl(Gfx::Bitmap& bitmap, int y, const void* dummy_scanline_data)
 {
     auto* dummy_scanline = (const Pixel*)dummy_scanline_data;
     if constexpr (filter_type == 0) {
@@ -300,10 +312,64 @@ template<bool has_alpha, u8 filter_type>
     }
 }
 
-[[gnu::noinline]] static void unfilter(PNGLoadingContext& context)
+NEVER_INLINE FLATTEN static void unfilter(PNGLoadingContext& context)
 {
     // First unpack the scanlines to RGBA:
     switch (context.color_type) {
+    case 0:
+        if (context.bit_depth == 8) {
+            for (int y = 0; y < context.height; ++y) {
+                auto* gray_values = (u8*)context.scanlines[y].data.data();
+                for (int i = 0; i < context.width; ++i) {
+                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
+                    pixel.r = gray_values[i];
+                    pixel.g = gray_values[i];
+                    pixel.b = gray_values[i];
+                    pixel.a = 0xff;
+                }
+            }
+        } else if (context.bit_depth == 16) {
+            for (int y = 0; y < context.height; ++y) {
+                auto* gray_values = (u16*)context.scanlines[y].data.data();
+                for (int i = 0; i < context.width; ++i) {
+                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
+                    pixel.r = gray_values[i] & 0xFF;
+                    pixel.g = gray_values[i] & 0xFF;
+                    pixel.b = gray_values[i] & 0xFF;
+                    pixel.a = 0xff;
+                }
+            }
+        } else {
+            ASSERT_NOT_REACHED();
+        }
+        break;
+    case 4:
+        if (context.bit_depth == 8) {
+            for (int y = 0; y < context.height; ++y) {
+                auto* tuples = (Tuple*)context.scanlines[y].data.data();
+                for (int i = 0; i < context.width; ++i) {
+                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
+                    pixel.r = tuples[i].gray;
+                    pixel.g = tuples[i].gray;
+                    pixel.b = tuples[i].gray;
+                    pixel.a = tuples[i].a;
+                }
+            }
+        } else if (context.bit_depth == 16) {
+            for (int y = 0; y < context.height; ++y) {
+                auto* tuples = (Tuple16*)context.scanlines[y].data.data();
+                for (int i = 0; i < context.width; ++i) {
+                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
+                    pixel.r = tuples[i].gray & 0xFF;
+                    pixel.g = tuples[i].gray & 0xFF;
+                    pixel.b = tuples[i].gray & 0xFF;
+                    pixel.a = tuples[i].a & 0xFF;
+                }
+            }
+        } else {
+            ASSERT_NOT_REACHED();
+        }
+        break;
     case 2:
         if (context.bit_depth == 8) {
             for (int y = 0; y < context.height; ++y) {
@@ -418,6 +484,12 @@ static bool decode_png_header(PNGLoadingContext& context)
 {
     if (context.state >= PNGLoadingContext::HeaderDecoded)
         return true;
+
+    if (!context.data || context.data_size < sizeof(png_header)) {
+        dbg() << "Missing PNG header";
+        context.state = PNGLoadingContext::State::Error;
+        return false;
+    }
 
     if (memcmp(context.data, png_header, sizeof(png_header)) != 0) {
         dbg() << "Invalid PNG header";
@@ -576,10 +648,16 @@ static bool process_IHDR(const ByteBuffer& data, PNGLoadingContext& context, boo
 
     switch (context.color_type) {
     case 0: // Each pixel is a grayscale sample.
+        // FIXME: Implement support for 1/2/4 bit grayscale based images.
+        if (ihdr.bit_depth != 8 && ihdr.bit_depth != 16) {
+            dbgprintf("PNGLoader::process_IHDR: Unsupported grayscale format (%d bpp).\n", context.bit_depth);
+            return false;
+        }
+        context.bytes_per_pixel = ihdr.bit_depth / 8;
+        break;
     case 4: // Each pixel is a grayscale sample, followed by an alpha sample.
-        // FIXME: Implement grayscale PNG support.
-        dbgprintf("PNGLoader::process_IHDR: Unsupported grayscale format.\n");
-        return false;
+        context.bytes_per_pixel = 2 * ihdr.bit_depth / 8;
+        break;
     case 2:
         context.bytes_per_pixel = 3 * (ihdr.bit_depth / 8);
         break;
@@ -717,6 +795,11 @@ bool PNGImageDecoderPlugin::set_nonvolatile()
     if (!m_context->bitmap)
         return false;
     return m_context->bitmap->set_nonvolatile();
+}
+
+bool PNGImageDecoderPlugin::sniff()
+{
+    return decode_png_header(*m_context);
 }
 
 }

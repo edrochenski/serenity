@@ -27,6 +27,7 @@
 #include <AK/Function.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibWeb/Bindings/XMLHttpRequestPrototype.h>
 #include <LibWeb/Bindings/XMLHttpRequestWrapper.h>
 #include <LibWeb/DOM/XMLHttpRequest.h>
@@ -35,10 +36,18 @@ namespace Web {
 namespace Bindings {
 
 XMLHttpRequestPrototype::XMLHttpRequestPrototype()
+    : Object(interpreter().global_object().object_prototype())
 {
     put_native_function("open", open, 2);
     put_native_function("send", send, 0);
-    put_native_property("responseText", response_text_getter, nullptr);
+    put_native_property("readyState", ready_state_getter, nullptr, JS::Attribute::Enumerable | JS::Attribute::Configurable);
+    put_native_property("responseText", response_text_getter, nullptr, JS::Attribute::Enumerable | JS::Attribute::Configurable);
+
+    put("UNSENT", JS::Value((i32)XMLHttpRequest::ReadyState::Unsent), JS::Attribute::Enumerable);
+    put("OPENED", JS::Value((i32)XMLHttpRequest::ReadyState::Opened), JS::Attribute::Enumerable);
+    put("HEADERS_RECEIVED", JS::Value((i32)XMLHttpRequest::ReadyState::HeadersReceived), JS::Attribute::Enumerable);
+    put("LOADING", JS::Value((i32)XMLHttpRequest::ReadyState::Loading), JS::Attribute::Enumerable);
+    put("DONE", JS::Value((i32)XMLHttpRequest::ReadyState::Done), JS::Attribute::Enumerable);
 }
 
 XMLHttpRequestPrototype::~XMLHttpRequestPrototype()
@@ -51,7 +60,7 @@ static XMLHttpRequest* impl_from(JS::Interpreter& interpreter)
     if (!this_object)
         return nullptr;
     if (StringView("XMLHttpRequestWrapper") != this_object->class_name()) {
-        interpreter.throw_exception<JS::Error>("TypeError", "This is not an XMLHttpRequest object");
+        interpreter.throw_exception<JS::TypeError>("This is not an XMLHttpRequest object");
         return nullptr;
     }
     return &static_cast<XMLHttpRequestWrapper*>(this_object)->impl();
@@ -73,6 +82,14 @@ JS::Value XMLHttpRequestPrototype::send(JS::Interpreter& interpreter)
         return {};
     impl->send();
     return JS::js_undefined();
+}
+
+JS::Value XMLHttpRequestPrototype::ready_state_getter(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+    return JS::Value((i32)impl->ready_state());
 }
 
 JS::Value XMLHttpRequestPrototype::response_text_getter(JS::Interpreter& interpreter)

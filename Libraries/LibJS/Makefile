@@ -12,6 +12,7 @@ OBJS = \
     Runtime/BooleanConstructor.o \
     Runtime/BooleanObject.o \
     Runtime/BooleanPrototype.o \
+    Runtime/BoundFunction.o \
     Runtime/Cell.o \
     Runtime/ConsoleObject.o \
     Runtime/Date.o \
@@ -25,7 +26,9 @@ OBJS = \
     Runtime/FunctionConstructor.o \
     Runtime/FunctionPrototype.o \
     Runtime/GlobalObject.o \
+    Runtime/LexicalEnvironment.o \
     Runtime/MathObject.o \
+    Runtime/MarkedValueList.o \
     Runtime/NativeFunction.o \
     Runtime/NativeProperty.o \
     Runtime/NumberConstructor.o \
@@ -35,11 +38,13 @@ OBJS = \
     Runtime/ObjectConstructor.o \
     Runtime/ObjectPrototype.o \
     Runtime/PrimitiveString.o \
+    Runtime/Reference.o \
     Runtime/ScriptFunction.o \
     Runtime/Shape.o \
     Runtime/StringConstructor.o \
     Runtime/StringObject.o \
     Runtime/StringPrototype.o \
+    Runtime/Uint8ClampedArray.o \
     Runtime/Value.o \
     Token.o
 

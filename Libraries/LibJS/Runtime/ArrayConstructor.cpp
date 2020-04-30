@@ -29,14 +29,16 @@
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/ArrayConstructor.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Shape.h>
 
 namespace JS {
 
 ArrayConstructor::ArrayConstructor()
+    : NativeFunction("Array", *interpreter().global_object().function_prototype())
 {
-    put("prototype", interpreter().array_prototype());
-    put("length", Value(1));
+    put("prototype", interpreter().global_object().array_prototype(), 0);
+    put("length", Value(1), Attribute::Configurable);
 }
 
 ArrayConstructor::~ArrayConstructor()
@@ -45,11 +47,11 @@ ArrayConstructor::~ArrayConstructor()
 
 Value ArrayConstructor::call(Interpreter& interpreter)
 {
-    if (interpreter.argument_count() == 0)
-        return interpreter.heap().allocate<Array>();
+    if (interpreter.argument_count() <= 0)
+        return Array::create(interpreter.global_object());
 
     if (interpreter.argument_count() == 1) {
-        auto* array = interpreter.heap().allocate<Array>();
+        auto* array = Array::create(interpreter.global_object());
         array->elements().resize(interpreter.argument(0).to_i32());
         return array;
     }

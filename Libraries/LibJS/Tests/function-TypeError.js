@@ -1,48 +1,50 @@
+load("test-common.js");
+
 try {
-    try {
+    assertThrowsError(() => {
         var b = true;
         b();
-    } catch(e) {
-        assert(e.name === "TypeError");
-        assert(e.message === "true is not a function");
-    }
+    }, {
+        error: TypeError,
+        message: "true is not a function (evaluated from 'b')"
+    });
 
-    try {
+    assertThrowsError(() => {
         var n = 100 + 20 + 3;
         n();
-    } catch(e) {
-        assert(e.name === "TypeError");
-        assert(e.message === "123 is not a function");
-    }
+    }, {
+        error: TypeError,
+        message: "123 is not a function (evaluated from 'n')"
+    });
 
-    try {
+    assertThrowsError(() => {
         var o = {};
         o.a();
-    } catch(e) {
-        assert(e.name === "TypeError");
-        assert(e.message === "undefined is not a function");
-    }
+    }, {
+        error: TypeError,
+        message: "undefined is not a function (evaluated from 'o.a')"
+    });
 
-    try {
+    assertThrowsError(() => {
         Math();
-    } catch(e) {
-        assert(e.name === "TypeError");
-        assert(e.message === "[object MathObject] is not a function");
-    }
+    }, {
+        error: TypeError,
+        message: "[object MathObject] is not a function (evaluated from 'Math')"
+    });
 
-    try {
+    assertThrowsError(() => {
         new Math();
-    } catch(e) {
-        assert(e.name === "TypeError");
-        assert(e.message === "[object MathObject] is not a constructor");
-    }
+    }, {
+        error: TypeError,
+        message: "[object MathObject] is not a constructor (evaluated from 'Math')"
+    });
 
-    try {
+    assertThrowsError(() => {
         new isNaN();
-    } catch(e) {
-        assert(e.name === "TypeError");
-        assert(e.message === "function () {\n  [NativeFunction]\n} is not a constructor");
-    }
+    }, {
+        error: TypeError,
+        message: "function isNaN() {\n  [NativeFunction]\n} is not a constructor (evaluated from 'isNaN')"
+    });
 
     console.log("PASS");
 } catch(e) {

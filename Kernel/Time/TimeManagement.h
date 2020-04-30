@@ -27,10 +27,8 @@
 #pragma once
 
 #include <AK/FixedArray.h>
-#include <AK/Optional.h>
-#include <AK/OwnPtr.h>
+#include <AK/RefPtr.h>
 #include <AK/Types.h>
-#include <AK/WeakPtr.h>
 #include <Kernel/UnixTypes.h>
 
 namespace Kernel {
@@ -38,7 +36,10 @@ namespace Kernel {
 #define OPTIMAL_TICKS_PER_SECOND_RATE 1000
 
 class HardwareTimer;
+
 class TimeManagement {
+    AK_MAKE_ETERNAL;
+
 public:
     static bool initialized();
     static void initialize();
@@ -56,27 +57,21 @@ public:
     static void update_time(const RegisterState&);
     void increment_time_since_boot(const RegisterState&);
 
-    static void update_scheduler_ticks(const RegisterState& regs);
-    void update_ticks(const RegisterState&);
-
-    static void stale_function(const RegisterState&);
     static bool is_hpet_periodic_mode_allowed();
 
 private:
     explicit TimeManagement(bool probe_non_legacy_hardware_timers);
     bool probe_and_set_legacy_hardware_timers();
     bool probe_and_set_non_legacy_hardware_timers();
-    Vector<size_t> scan_and_initialize_periodic_timers();
-    Vector<size_t> scan_for_non_periodic_timers();
-    FixedArray<RefPtr<HardwareTimer>> m_hardware_timers { 2 };
+    Vector<HardwareTimer*> scan_and_initialize_periodic_timers();
+    Vector<HardwareTimer*> scan_for_non_periodic_timers();
+    Vector<RefPtr<HardwareTimer>> m_hardware_timers;
 
     u32 m_ticks_this_second { 0 };
     u32 m_seconds_since_boot { 0 };
     time_t m_epoch_time { 0 };
     RefPtr<HardwareTimer> m_system_timer;
     RefPtr<HardwareTimer> m_time_keeper_timer;
-    Function<void(RegisterState&)> m_scheduler_ticking { update_time };
-    Function<void(RegisterState&)> m_stale_method { stale_function };
 };
 
 }

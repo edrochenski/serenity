@@ -56,6 +56,7 @@ void AbstractView::set_model(RefPtr<Model> model)
     if (m_model)
         m_model->register_view({}, *this);
     did_update_model(GUI::Model::InvalidateAllIndexes);
+    scroll_to_top();
 }
 
 void AbstractView::did_update_model(unsigned flags)
@@ -349,9 +350,6 @@ void AbstractView::drop_event(DropEvent& event)
         return;
 
     auto index = index_at_event_position(event.position());
-    if (!index.is_valid())
-        return;
-
     if (on_drop)
         on_drop(index, event);
 }

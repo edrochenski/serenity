@@ -60,10 +60,15 @@ WallpaperMode mode_to_enum(const String& name)
 
 Compositor::Compositor()
 {
+    m_display_link_notify_timer = add<Core::Timer>(
+        1000 / 60, [this] {
+            notify_display_links();
+        });
+    m_display_link_notify_timer->stop();
+
     m_compose_timer = Core::Timer::create_single_shot(
         1000 / 60,
         [this] {
-            notify_display_links();
             compose();
         },
         this);
@@ -312,7 +317,7 @@ void Compositor::invalidate(const Gfx::Rect& a_rect)
     }
 }
 
-bool Compositor::set_backgound_color(const String& background_color)
+bool Compositor::set_background_color(const String& background_color)
 {
     auto& wm = WindowManager::the();
     wm.wm_config()->write_entry("Background", "Color", background_color);
@@ -346,10 +351,6 @@ bool Compositor::set_wallpaper(const String& path, Function<void(bool)>&& callba
         },
 
         [this, path, callback = move(callback)](RefPtr<Gfx::Bitmap> bitmap) {
-            if (!bitmap) {
-                callback(false);
-                return;
-            }
             m_wallpaper_path = path;
             m_wallpaper = move(bitmap);
             invalidate();
@@ -486,6 +487,21 @@ void Compositor::notify_display_links()
     ClientConnection::for_each_client([](auto& client) {
         client.notify_display_link({});
     });
+}
+
+void Compositor::increment_display_link_count(Badge<ClientConnection>)
+{
+    ++m_display_link_count;
+    if (m_display_link_count == 1)
+        m_display_link_notify_timer->start();
+}
+
+void Compositor::decrement_display_link_count(Badge<ClientConnection>)
+{
+    ASSERT(m_display_link_count);
+    --m_display_link_count;
+    if (!m_display_link_count)
+        m_display_link_notify_timer->stop();
 }
 
 }

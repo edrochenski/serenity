@@ -121,6 +121,7 @@ public:
     Action& paste_action() { return *m_paste_action; }
     Action& delete_action() { return *m_delete_action; }
     Action& go_to_line_action() { return *m_go_to_line_action; }
+    Action& select_all_action() { return *m_select_all_action; }
 
     void add_custom_context_menu_action(Action&);
 
@@ -150,8 +151,10 @@ protected:
     virtual void resize_event(ResizeEvent&) override;
     virtual void theme_change_event(ThemeChangeEvent&) override;
     virtual void cursor_did_change() {}
+    Gfx::Rect ruler_content_rect(size_t line) const;
 
     TextPosition text_position_at(const Gfx::Point&) const;
+    bool ruler_visible() const { return m_ruler_visible; }
 
 private:
     friend class TextDocumentLine;
@@ -182,7 +185,6 @@ private:
     TextDocumentLine& current_line() { return line(m_cursor.line()); }
     const TextDocumentLine& current_line() const { return line(m_cursor.line()); }
     int ruler_width() const;
-    Gfx::Rect ruler_content_rect(size_t line) const;
     void toggle_selection_if_needed_for_event(const KeyEvent&);
     void delete_selection();
     void did_update_selection();
@@ -199,6 +201,8 @@ private:
 
     size_t visual_line_containing(size_t line_index, size_t column) const;
     void recompute_visual_lines(size_t line_index);
+
+    void automatic_selection_scroll_timer_fired();
 
     template<class T, class... Args>
     inline void execute(Args&&... args)
@@ -231,6 +235,7 @@ private:
     RefPtr<Action> m_paste_action;
     RefPtr<Action> m_delete_action;
     RefPtr<Action> m_go_to_line_action;
+    RefPtr<Action> m_select_all_action;
     Core::ElapsedTimer m_triple_click_timer;
     NonnullRefPtrVector<Action> m_custom_context_menu_actions;
 
@@ -247,6 +252,9 @@ private:
     NonnullOwnPtrVector<LineVisualData> m_line_visual_data;
 
     OwnPtr<SyntaxHighlighter> m_highlighter;
+
+    RefPtr<Core::Timer> m_automatic_selection_scroll_timer;
+    Gfx::Point m_last_mousemove_position;
 };
 
 }

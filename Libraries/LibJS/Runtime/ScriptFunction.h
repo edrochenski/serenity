@@ -32,7 +32,9 @@ namespace JS {
 
 class ScriptFunction final : public Function {
 public:
-    ScriptFunction(const FlyString& name, const Statement& body, Vector<FlyString> parameters = {});
+    static ScriptFunction* create(GlobalObject&, const FlyString& name, const Statement& body, Vector<FlyString> parameters, LexicalEnvironment* parent_environment);
+
+    ScriptFunction(const FlyString& name, const Statement& body, Vector<FlyString> parameters, LexicalEnvironment* parent_environment, Object& prototype);
     virtual ~ScriptFunction();
 
     const Statement& body() const { return m_body; }
@@ -46,6 +48,8 @@ public:
 private:
     virtual bool is_script_function() const final { return true; }
     virtual const char* class_name() const override { return "ScriptFunction"; }
+    virtual LexicalEnvironment* create_environment() override;
+    virtual void visit_children(Visitor&) override;
 
     static Value length_getter(Interpreter&);
     static void length_setter(Interpreter&, Value);
@@ -53,6 +57,7 @@ private:
     FlyString m_name;
     NonnullRefPtr<Statement> m_body;
     const Vector<FlyString> m_parameters;
+    LexicalEnvironment* m_parent_environment { nullptr };
 };
 
 }

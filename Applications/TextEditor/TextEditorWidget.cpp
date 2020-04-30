@@ -42,26 +42,39 @@
 #include <LibGUI/Menu.h>
 #include <LibGUI/MenuBar.h>
 #include <LibGUI/MessageBox.h>
+#include <LibGUI/Splitter.h>
 #include <LibGUI/StatusBar.h>
 #include <LibGUI/TextBox.h>
 #include <LibGUI/TextEditor.h>
 #include <LibGUI/ToolBar.h>
+#include <LibGUI/ToolBarContainer.h>
 #include <LibGfx/Font.h>
+#include <LibMarkdown/Document.h>
+#include <LibWeb/HtmlView.h>
+#include <LibWeb/Parser/HTMLParser.h>
 #include <string.h>
 
 TextEditorWidget::TextEditorWidget()
 {
+    set_fill_with_background_color(true);
     set_layout<GUI::VerticalBoxLayout>();
-    layout()->set_spacing(0);
+    layout()->set_spacing(2);
 
-    auto& toolbar = add<GUI::ToolBar>();
-    m_editor = add<GUI::TextEditor>();
+    auto& toolbar_container = add<GUI::ToolBarContainer>();
+    auto& toolbar = toolbar_container.add<GUI::ToolBar>();
+
+    auto& splitter = add<GUI::HorizontalSplitter>();
+
+    m_editor = splitter.add<GUI::TextEditor>();
     m_editor->set_ruler_visible(true);
     m_editor->set_automatic_indentation_enabled(true);
     m_editor->set_line_wrapping_enabled(true);
 
     m_editor->on_change = [this] {
-        // Do not mark as diry on the first change (When document is first opened.)
+        if (m_markdown_preview_enabled)
+            update_markdown_preview();
+
+        // Do not mark as dirty on the first change (When document is first opened.)
         if (m_document_opening) {
             m_document_opening = false;
             return;
@@ -72,6 +85,9 @@ TextEditorWidget::TextEditorWidget()
         if (!was_dirty)
             update_title();
     };
+
+    m_html_view = splitter.add<Web::HtmlView>();
+    m_html_view->set_visible(false);
 
     m_find_replace_widget = add<GUI::Widget>();
     m_find_replace_widget->set_fill_with_background_color(true);
@@ -98,7 +114,7 @@ TextEditorWidget::TextEditorWidget()
     m_find_textbox = m_find_widget->add<GUI::TextBox>();
     m_replace_textbox = m_replace_widget->add<GUI::TextBox>();
 
-    m_find_next_action = GUI::Action::create("Find next", { Mod_Ctrl, Key_G }, [&](auto&) {
+    m_find_next_action = GUI::Action::create("Find next", { Mod_Ctrl, Key_G }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find-next.png"), [&](auto&) {
         auto needle = m_find_textbox->text();
         if (needle.is_empty()) {
             dbg() << "find_next(\"\")";
@@ -117,7 +133,7 @@ TextEditorWidget::TextEditorWidget()
         }
     });
 
-    m_find_previous_action = GUI::Action::create("Find previous", { Mod_Ctrl | Mod_Shift, Key_G }, [&](auto&) {
+    m_find_previous_action = GUI::Action::create("Find previous", { Mod_Ctrl | Mod_Shift, Key_G }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find-previous.png"), [&](auto&) {
         auto needle = m_find_textbox->text();
         if (needle.is_empty()) {
             dbg() << "find_prev(\"\")";
@@ -334,14 +350,12 @@ TextEditorWidget::TextEditorWidget()
         m_save_as_action->activate();
     });
 
-    m_line_wrapping_setting_action = GUI::Action::create("Line wrapping", [&](GUI::Action& action) {
-        action.set_checked(!action.is_checked());
+    m_line_wrapping_setting_action = GUI::Action::create_checkable("Line wrapping", [&](auto& action) {
         m_editor->set_line_wrapping_enabled(action.is_checked());
     });
-    m_line_wrapping_setting_action->set_checkable(true);
     m_line_wrapping_setting_action->set_checked(m_editor->is_line_wrapping_enabled());
 
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
     auto& app_menu = menubar->add_menu("Text Editor");
     app_menu.add_action(*m_new_action);
     app_menu.add_action(*m_open_action);
@@ -370,7 +384,19 @@ TextEditorWidget::TextEditorWidget()
     edit_menu.add_action(*m_replace_previous_action);
     edit_menu.add_action(*m_replace_all_action);
 
-    auto& font_menu = menubar->add_menu("Font");
+    m_markdown_preview_action = GUI::Action::create_checkable(
+        "Markdown preview", [this](auto& action) {
+            set_markdown_preview_enabled(action.is_checked());
+        },
+        this);
+
+    auto& view_menu = menubar->add_menu("View");
+    view_menu.add_action(*m_line_wrapping_setting_action);
+    view_menu.add_separator();
+    view_menu.add_action(*m_markdown_preview_action);
+    view_menu.add_separator();
+
+    auto& font_menu = view_menu.add_submenu("Font");
     GUI::FontDatabase::the().for_each_fixed_width_font([&](const StringView& font_name) {
         font_menu.add_action(GUI::Action::create(font_name, [this](const GUI::Action& action) {
             m_editor->set_font(GUI::FontDatabase::the().get_by_name(action.text()));
@@ -378,43 +404,30 @@ TextEditorWidget::TextEditorWidget()
         }));
     });
 
-    syntax_actions = GUI::ActionGroup {};
     syntax_actions.set_exclusive(true);
 
-    auto& syntax_menu = menubar->add_menu("Syntax");
-    m_plain_text_highlight = GUI::Action::create("Plain Text", [&](GUI::Action& action) {
-        action.set_checked(true);
+    auto& syntax_menu = view_menu.add_submenu("Syntax");
+    m_plain_text_highlight = GUI::Action::create_checkable("Plain text", [&](auto&) {
         m_editor->set_syntax_highlighter(nullptr);
         m_editor->update();
     });
-    m_plain_text_highlight->set_checkable(true);
     m_plain_text_highlight->set_checked(true);
     syntax_actions.add_action(*m_plain_text_highlight);
     syntax_menu.add_action(*m_plain_text_highlight);
 
-    m_cpp_highlight = GUI::Action::create("C++", [&](GUI::Action& action) {
-        action.set_checked(true);
+    m_cpp_highlight = GUI::Action::create_checkable("C++", [&](auto&) {
         m_editor->set_syntax_highlighter(make<GUI::CppSyntaxHighlighter>());
         m_editor->update();
     });
-    m_cpp_highlight->set_checkable(true);
     syntax_actions.add_action(*m_cpp_highlight);
     syntax_menu.add_action(*m_cpp_highlight);
 
-    m_js_highlight = GUI::Action::create("Javascript", [&](GUI::Action& action) {
-        action.set_checked(true);
+    m_js_highlight = GUI::Action::create_checkable("JavaScript", [&](auto&) {
         m_editor->set_syntax_highlighter(make<GUI::JSSyntaxHighlighter>());
         m_editor->update();
     });
-    m_js_highlight->set_checkable(true);
     syntax_actions.add_action(*m_js_highlight);
     syntax_menu.add_action(*m_js_highlight);
-
-    auto& view_menu = menubar->add_menu("View");
-    view_menu.add_action(*m_line_wrapping_setting_action);
-    view_menu.add_separator();
-    view_menu.add_submenu(move(font_menu));
-    view_menu.add_submenu(move(syntax_menu));
 
     auto& help_menu = menubar->add_menu("Help");
     help_menu.add_action(GUI::Action::create("About", [&](auto&) {
@@ -450,12 +463,15 @@ void TextEditorWidget::set_path(const FileSystemPath& file)
     m_name = file.title();
     m_extension = file.extension();
 
-    if (m_extension == "cpp" || m_extension == "h")
+    if (m_extension == "cpp" || m_extension == "h") {
         m_cpp_highlight->activate();
-    else if (m_extension == "js")
+    } else if (m_extension == "js") {
         m_js_highlight->activate();
-    else
+    } else {
         m_plain_text_highlight->activate();
+    }
+
+    set_markdown_preview_enabled(m_extension == "md");
 
     update_title();
 }
@@ -518,5 +534,26 @@ void TextEditorWidget::drop_event(GUI::DropEvent& event)
             return;
         }
         open_sesame(urls.first().path());
+    }
+}
+
+void TextEditorWidget::set_markdown_preview_enabled(bool enabled)
+{
+    if (m_markdown_preview_enabled == enabled)
+        return;
+    m_markdown_preview_enabled = enabled;
+    m_markdown_preview_action->set_checked(enabled);
+    m_html_view->set_visible(enabled);
+    if (enabled)
+        update_markdown_preview();
+}
+
+void TextEditorWidget::update_markdown_preview()
+{
+    Markdown::Document document;
+    if (document.parse(m_editor->text())) {
+        auto html = document.render_to_html();
+        auto html_document = Web::parse_html_document(html);
+        m_html_view->set_document(html_document);
     }
 }

@@ -26,6 +26,7 @@
 
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/NumberConstructor.h>
 #include <LibJS/Runtime/NumberObject.h>
 #include <math.h>
@@ -37,17 +38,22 @@
 namespace JS {
 
 NumberConstructor::NumberConstructor()
+    : NativeFunction("Number", *interpreter().global_object().function_prototype())
 {
-    put_native_function("isSafeInteger", is_safe_integer, 1);
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+    put_native_function("isFinite", is_finite, 1, attr);
+    put_native_function("isInteger", is_integer, 1, attr);
+    put_native_function("isNaN", is_nan, 1, attr);
+    put_native_function("isSafeInteger", is_safe_integer, 1, attr);
 
-    put("prototype", interpreter().number_prototype());
-    put("length", Value(1));
-    put("EPSILON", Value(EPSILON));
-    put("MAX_SAFE_INTEGER", Value(MAX_SAFE_INTEGER));
-    put("MIN_SAFE_INTEGER", Value(MIN_SAFE_INTEGER));
-    put("NEGATIVE_INFINITY", js_negative_infinity());
-    put("POSITIVE_INFINITY", js_infinity());
-    put("NaN", js_nan());
+    put("prototype", interpreter().global_object().number_prototype(), 0);
+    put("length", Value(1), Attribute::Configurable);
+    put("EPSILON", Value(EPSILON), 0);
+    put("MAX_SAFE_INTEGER", Value(MAX_SAFE_INTEGER), 0);
+    put("MIN_SAFE_INTEGER", Value(MIN_SAFE_INTEGER), 0);
+    put("NEGATIVE_INFINITY", js_negative_infinity(), 0);
+    put("POSITIVE_INFINITY", js_infinity(), 0);
+    put("NaN", js_nan(), 0);
 }
 
 NumberConstructor::~NumberConstructor()
@@ -68,7 +74,23 @@ Value NumberConstructor::construct(Interpreter& interpreter)
         number = 0;
     else
         number = interpreter.argument(0).to_number().as_double();
-    return Value(interpreter.heap().allocate<NumberObject>(number));
+    return NumberObject::create(interpreter.global_object(), number);
+}
+
+Value NumberConstructor::is_finite(Interpreter& interpreter)
+{
+    return Value(interpreter.argument(0).is_finite_number());
+}
+
+Value NumberConstructor::is_integer(Interpreter& interpreter)
+{
+    auto value = interpreter.argument(0);
+    return Value(value.is_number() && (i32)value.as_double() == value.as_double());
+}
+
+Value NumberConstructor::is_nan(Interpreter& interpreter)
+{
+    return Value(interpreter.argument(0).is_nan());
 }
 
 Value NumberConstructor::is_safe_integer(Interpreter& interpreter)

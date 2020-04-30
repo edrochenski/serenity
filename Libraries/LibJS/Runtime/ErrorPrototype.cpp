@@ -29,16 +29,19 @@
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/ErrorPrototype.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
 
 ErrorPrototype::ErrorPrototype()
+    : Object(interpreter().global_object().object_prototype())
 {
-    put_native_property("name", name_getter, nullptr);
-    put_native_property("message", message_getter, nullptr);
-    put_native_function("toString", to_string);
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+    put_native_property("name", name_getter, name_setter, attr);
+    put_native_property("message", message_getter, nullptr, attr);
+    put_native_function("toString", to_string, 0, attr);
 }
 
 ErrorPrototype::~ErrorPrototype()
@@ -53,6 +56,19 @@ Value ErrorPrototype::name_getter(Interpreter& interpreter)
     if (!this_object->is_error())
         return interpreter.throw_exception<TypeError>("Not an Error object");
     return js_string(interpreter, static_cast<const Error*>(this_object)->name());
+}
+
+void ErrorPrototype::name_setter(Interpreter& interpreter, Value value)
+{
+    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    if (!this_object)
+        return;
+    if (!this_object->is_error()) {
+        interpreter.throw_exception<TypeError>("Not an Error object");
+        return;
+    }
+    auto name = FlyString(value.to_string());
+    static_cast<Error*>(this_object)->set_name(name);
 }
 
 Value ErrorPrototype::message_getter(Interpreter& interpreter)
@@ -73,13 +89,13 @@ Value ErrorPrototype::to_string(Interpreter& interpreter)
 
     String name = "Error";
     auto object_name_property = this_object.get("name");
-    if (object_name_property.has_value() && !object_name_property.value().is_undefined())
-        name = object_name_property.value().to_string();
+    if (!object_name_property.is_empty() && !object_name_property.is_undefined())
+        name = object_name_property.to_string();
 
     String message = "";
     auto object_message_property = this_object.get("message");
-    if (object_message_property.has_value() && !object_message_property.value().is_undefined())
-        message = object_message_property.value().to_string();
+    if (!object_message_property.is_empty() && !object_message_property.is_undefined())
+        message = object_message_property.to_string();
 
     if (name.length() == 0)
         return js_string(interpreter, message);
@@ -90,8 +106,8 @@ Value ErrorPrototype::to_string(Interpreter& interpreter)
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \
     PrototypeName::PrototypeName()                                            \
+        : Object(interpreter().global_object().error_prototype())             \
     {                                                                         \
-        set_prototype(interpreter().error_prototype());                       \
     }                                                                         \
     PrototypeName::~PrototypeName() {}                                        \
     const char* PrototypeName::class_name() const { return #PrototypeName; }

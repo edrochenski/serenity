@@ -27,6 +27,7 @@
 #include <AK/QuickSort.h>
 #include <AK/StringBuilder.h>
 #include <Kernel/KeyCode.h>
+#include <LibCore/Timer.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Clipboard.h>
 #include <LibGUI/FontDatabase.h>
@@ -60,6 +61,10 @@ TextEditor::TextEditor(Type type)
     // FIXME: Recompute vertical scrollbar step size on font change.
     vertical_scrollbar().set_step(line_height());
     m_cursor = { 0, 0 };
+    m_automatic_selection_scroll_timer = add<Core::Timer>(100, [this] {
+        automatic_selection_scroll_timer_fired();
+    });
+    m_automatic_selection_scroll_timer->stop();
     create_actions();
 }
 
@@ -93,6 +98,8 @@ void TextEditor::create_actions()
             },
             this);
     }
+    m_select_all_action = Action::create(
+        "Select all", { Mod_Ctrl, Key_A }, Gfx::Bitmap::load_from_file("/res/icons/16x16/select-all.png"), [this](auto&) { select_all(); }, this);
 }
 
 void TextEditor::set_text(const StringView& text)
@@ -158,7 +165,10 @@ TextPosition TextEditor::text_position_at(const Gfx::Point& a_position) const
     size_t column_index;
     switch (m_text_alignment) {
     case Gfx::TextAlignment::CenterLeft:
-        column_index = (position.x() + glyph_width() / 2) / glyph_width();
+        if (position.x() <= 0)
+            column_index = 0;
+        else
+            column_index = (position.x() + glyph_width() / 2) / glyph_width();
         if (is_line_wrapping_enabled()) {
             for_each_visual_line(line_index, [&](const Gfx::Rect& rect, const StringView&, size_t start_of_line) {
                 if (rect.contains_vertically(position.y())) {
@@ -261,6 +271,7 @@ void TextEditor::mousedown_event(MouseEvent& event)
     }
 
     m_in_drag_select = true;
+    m_automatic_selection_scroll_timer->start();
 
     set_cursor(text_position_at(event.position()));
 
@@ -289,13 +300,26 @@ void TextEditor::mouseup_event(MouseEvent& event)
 
 void TextEditor::mousemove_event(MouseEvent& event)
 {
-    if (m_in_drag_select) {
+    m_last_mousemove_position = event.position();
+    if (m_in_drag_select && (rect().contains(event.position()) || !m_automatic_selection_scroll_timer->is_active())) {
         set_cursor(text_position_at(event.position()));
         m_selection.set_end(m_cursor);
         did_update_selection();
         update();
         return;
     }
+}
+
+void TextEditor::automatic_selection_scroll_timer_fired()
+{
+    if (!m_in_drag_select) {
+        m_automatic_selection_scroll_timer->stop();
+        return;
+    }
+    set_cursor(text_position_at(m_last_mousemove_position));
+    m_selection.set_end(m_cursor);
+    did_update_selection();
+    update();
 }
 
 int TextEditor::ruler_width() const
@@ -335,7 +359,7 @@ Gfx::Rect TextEditor::visible_text_rect_in_inner_coordinates() const
 
 void TextEditor::paint_event(PaintEvent& event)
 {
-    Color widget_background_color = palette().color(background_role());
+    Color widget_background_color = palette().color(is_enabled() ? background_role() : Gfx::ColorRole::Window);
     // NOTE: This ensures that spans are updated before we look at them.
     flush_pending_change_notification_if_needed();
 
@@ -449,9 +473,12 @@ void TextEditor::paint_event(PaintEvent& event)
             }
             bool physical_line_has_selection = has_selection && line_index >= selection.start().line() && line_index <= selection.end().line();
             if (physical_line_has_selection) {
+                size_t start_of_selection_within_visual_line = (size_t)max(0, (int)selection_start_column_within_line - (int)start_of_visual_line);
+                size_t end_of_selection_within_visual_line = selection_end_column_within_line - start_of_visual_line;
 
-                bool current_visual_line_has_selection = (line_index != selection.start().line() && line_index != selection.end().line())
-                    || (visual_line_index >= first_visual_line_with_selection && visual_line_index <= last_visual_line_with_selection);
+                bool current_visual_line_has_selection = start_of_selection_within_visual_line != end_of_selection_within_visual_line
+                    && ((line_index != selection.start().line() && line_index != selection.end().line())
+                        || (visual_line_index >= first_visual_line_with_selection && visual_line_index <= last_visual_line_with_selection));
                 if (current_visual_line_has_selection) {
                     bool selection_begins_on_current_visual_line = visual_line_index == first_visual_line_with_selection;
                     bool selection_ends_on_current_visual_line = visual_line_index == last_visual_line_with_selection;
@@ -475,9 +502,6 @@ void TextEditor::paint_event(PaintEvent& event)
                     Color text_color = is_focused() ? palette().selection_text() : palette().inactive_selection_text();
 
                     painter.fill_rect(selection_rect, background_color);
-
-                    size_t start_of_selection_within_visual_line = (size_t)max(0, (int)selection_start_column_within_line - (int)start_of_visual_line);
-                    size_t end_of_selection_within_visual_line = selection_end_column_within_line - start_of_visual_line;
 
                     StringView visual_selected_text {
                         visual_line_text.characters_without_null_termination() + start_of_selection_within_visual_line,
@@ -788,10 +812,6 @@ void TextEditor::keydown_event(KeyEvent& event)
             m_selection.set_end(m_cursor);
             did_update_selection();
         }
-        return;
-    }
-    if (event.modifiers() == Mod_Ctrl && event.key() == KeyCode::Key_A) {
-        select_all();
         return;
     }
     if (event.alt() && event.shift() && event.key() == KeyCode::Key_S) {
@@ -1189,12 +1209,17 @@ void TextEditor::enter_event(Core::Event&)
 {
     ASSERT(window());
     window()->set_override_cursor(StandardCursor::IBeam);
+
+    m_automatic_selection_scroll_timer->stop();
 }
 
 void TextEditor::leave_event(Core::Event&)
 {
     ASSERT(window());
     window()->set_override_cursor(StandardCursor::None);
+
+    if (m_in_drag_select)
+        m_automatic_selection_scroll_timer->start();
 }
 
 void TextEditor::did_change()
@@ -1250,6 +1275,8 @@ void TextEditor::context_menu_event(ContextMenuEvent& event)
         m_context_menu->add_action(copy_action());
         m_context_menu->add_action(paste_action());
         m_context_menu->add_action(delete_action());
+        m_context_menu->add_separator();
+        m_context_menu->add_action(select_all_action());
         if (is_multi_line()) {
             m_context_menu->add_separator();
             m_context_menu->add_action(go_to_line_action());

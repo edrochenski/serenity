@@ -29,13 +29,15 @@
 #include <LibJS/Runtime/BooleanConstructor.h>
 #include <LibJS/Runtime/BooleanObject.h>
 #include <LibJS/Runtime/BooleanPrototype.h>
+#include <LibJS/Runtime/GlobalObject.h>
 
 namespace JS {
 
 BooleanConstructor::BooleanConstructor()
+    : NativeFunction("Boolean", *interpreter().global_object().function_prototype())
 {
-    put("prototype", Value(interpreter().boolean_prototype()));
-    put("length", Value(1));
+    put("prototype", Value(interpreter().global_object().boolean_prototype()), 0);
+    put("length", Value(1), Attribute::Configurable);
 }
 
 BooleanConstructor::~BooleanConstructor()
@@ -49,8 +51,7 @@ Value BooleanConstructor::call(Interpreter& interpreter)
 
 Value BooleanConstructor::construct(Interpreter& interpreter)
 {
-    auto* bool_object = interpreter.heap().allocate<BooleanObject>(interpreter.argument(0).to_boolean());
-    return Value(bool_object);
+    return BooleanObject::create(interpreter.global_object(), interpreter.argument(0).to_boolean());
 }
 
 }

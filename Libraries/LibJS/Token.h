@@ -111,8 +111,11 @@ namespace JS {
     __ENUMERATE_JS_TOKEN(SlashEquals)                 \
     __ENUMERATE_JS_TOKEN(StringLiteral)               \
     __ENUMERATE_JS_TOKEN(Switch)                      \
+    __ENUMERATE_JS_TOKEN(TemplateLiteral)             \
+    __ENUMERATE_JS_TOKEN(This)                        \
     __ENUMERATE_JS_TOKEN(Throw)                       \
     __ENUMERATE_JS_TOKEN(Tilde)                       \
+    __ENUMERATE_JS_TOKEN(TripleDot)                   \
     __ENUMERATE_JS_TOKEN(Try)                         \
     __ENUMERATE_JS_TOKEN(Typeof)                      \
     __ENUMERATE_JS_TOKEN(UnsignedShiftRight)          \
@@ -151,6 +154,8 @@ public:
     double double_value() const;
     String string_value() const;
     bool bool_value() const;
+
+    bool is_identifier_name() const;
 
 private:
     TokenType m_type;

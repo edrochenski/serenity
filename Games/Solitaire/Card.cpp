@@ -80,7 +80,7 @@ static RefPtr<Gfx::Bitmap> s_background;
 
 Card::Card(Type type, uint8_t value)
     : m_rect(Gfx::Rect({}, { width, height }))
-    , m_front(Gfx::Bitmap::create(Gfx::BitmapFormat::RGB32, { width, height }))
+    , m_front(*Gfx::Bitmap::create(Gfx::BitmapFormat::RGB32, { width, height }))
     , m_type(type)
     , m_value(value)
 {
@@ -92,7 +92,7 @@ Card::Card(Type type, uint8_t value)
         Gfx::Painter bg_painter(*s_background);
 
         s_background->fill(Color::White);
-        auto image = Gfx::Bitmap::load_from_file("/res/icons/buggie.png");
+        auto image = Gfx::Bitmap::load_from_file("/res/icons/buggie-deck.png");
         ASSERT(!image.is_null());
 
         float aspect_ratio = image->width() / static_cast<float>(image->height());

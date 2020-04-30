@@ -54,6 +54,8 @@ bool URL::parse(const StringView& string)
         InPath,
         InQuery,
         InFragment,
+        InDataMimeType,
+        InDataPayload,
     };
 
     Vector<char, 256> buffer;
@@ -75,30 +77,39 @@ bool URL::parse(const StringView& string)
 
     while (index < string.length()) {
         switch (state) {
-        case State::InProtocol:
+        case State::InProtocol: {
             if (is_valid_protocol_character(peek())) {
                 buffer.append(consume());
                 continue;
             }
             if (consume() != ':')
                 return false;
+
+            m_protocol = String::copy(buffer);
+
+            if (m_protocol == "data") {
+                buffer.clear();
+                state = State::InDataMimeType;
+                continue;
+            }
+
             if (consume() != '/')
                 return false;
             if (consume() != '/')
                 return false;
             if (buffer.is_empty())
                 return false;
-            m_protocol = String::copy(buffer);
             if (m_protocol == "http")
                 m_port = 80;
             else if (m_protocol == "https")
                 m_port = 443;
-            buffer.clear();
             if (m_protocol == "file")
                 state = State::InPath;
             else
                 state = State::InHostname;
+            buffer.clear();
             continue;
+        }
         case State::InHostname:
             if (is_valid_hostname_character(peek())) {
                 buffer.append(consume());
@@ -160,6 +171,41 @@ bool URL::parse(const StringView& string)
         case State::InFragment:
             buffer.append(consume());
             continue;
+        case State::InDataMimeType: {
+            if (peek() != ';' && peek() != ',') {
+                buffer.append(consume());
+                continue;
+            }
+
+            m_data_mime_type = String::copy(buffer);
+            buffer.clear();
+
+            if (peek() == ';') {
+                consume();
+                if (consume() != 'b')
+                    return false;
+                if (consume() != 'a')
+                    return false;
+                if (consume() != 's')
+                    return false;
+                if (consume() != 'e')
+                    return false;
+                if (consume() != '6')
+                    return false;
+                if (consume() != '4')
+                    return false;
+                m_data_payload_is_base64 = true;
+            }
+
+            if (consume() != ',')
+                return false;
+
+            state = State::InDataPayload;
+            break;
+        }
+        case State::InDataPayload:
+            buffer.append(consume());
+            break;
         }
     }
     if (state == State::InHostname) {
@@ -169,12 +215,16 @@ bool URL::parse(const StringView& string)
         m_host = String::copy(buffer);
         m_path = "/";
     }
+    if (state == State::InProtocol)
+        return false;
     if (state == State::InPath)
         m_path = String::copy(buffer);
     if (state == State::InQuery)
         m_query = String::copy(buffer);
     if (state == State::InFragment)
         m_fragment = String::copy(buffer);
+    if (state == State::InDataPayload)
+        m_data_payload = String::copy(buffer);
     if (m_query.is_null())
         m_query = "";
     if (m_fragment.is_null())
@@ -191,6 +241,17 @@ String URL::to_string() const
 {
     StringBuilder builder;
     builder.append(m_protocol);
+
+    if (m_protocol == "data") {
+        builder.append(':');
+        builder.append(m_data_mime_type);
+        if (m_data_payload_is_base64)
+            builder.append(";base64");
+        builder.append(',');
+        builder.append(m_data_payload);
+        return builder.to_string();
+    }
+
     builder.append("://");
     if (protocol() != "file") {
         builder.append(m_host);
@@ -277,14 +338,32 @@ bool URL::compute_validity() const
     // FIXME: This is by no means complete.
     if (m_protocol.is_empty())
         return false;
-    if (m_protocol == "http" || m_protocol == "https") {
-        if (m_host.is_empty())
-            return false;
-    } else if (m_protocol == "file") {
+    if (m_protocol == "file") {
         if (m_path.is_empty())
+            return false;
+    } else {
+        if (m_host.is_empty())
             return false;
     }
     return true;
+}
+
+URL URL::create_with_file_protocol(const String& path)
+{
+    URL url;
+    url.set_protocol("file");
+    url.set_path(path);
+    return url;
+}
+
+URL URL::create_with_url_or_path(const String& url_or_path)
+{
+    URL url = url_or_path;
+    if (url.is_valid())
+        return url;
+
+    String path = canonicalized_path(url_or_path);
+    return URL::create_with_file_protocol(path);
 }
 
 }

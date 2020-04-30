@@ -33,6 +33,8 @@
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Heap.h>
 #include <LibJS/Runtime/Exception.h>
+#include <LibJS/Runtime/LexicalEnvironment.h>
+#include <LibJS/Runtime/MarkedValueList.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
@@ -46,21 +48,17 @@ enum class ScopeType {
     Continuable,
 };
 
-struct Variable {
-    Value value;
-    DeclarationKind declaration_kind;
-};
-
 struct ScopeFrame {
     ScopeType type;
     NonnullRefPtr<ScopeNode> scope_node;
-    HashMap<FlyString, Variable> variables;
+    bool pushed_environment { false };
 };
 
 struct CallFrame {
     FlyString function_name;
     Value this_value;
     Vector<Value> arguments;
+    LexicalEnvironment* environment { nullptr };
 };
 
 struct Argument {
@@ -77,6 +75,7 @@ public:
     {
         auto interpreter = adopt_own(*new Interpreter);
         interpreter->m_global_object = interpreter->heap().allocate<GlobalObjectType>(forward<Args>(args)...);
+        static_cast<GlobalObjectType*>(interpreter->m_global_object)->initialize();
         return interpreter;
     }
 
@@ -94,25 +93,32 @@ public:
     bool should_unwind_until(ScopeType type) const { return m_unwind_until == type; }
     bool should_unwind() const { return m_unwind_until != ScopeType::None; }
 
-    Optional<Value> get_variable(const FlyString& name);
+    Value get_variable(const FlyString& name);
     void set_variable(const FlyString& name, Value, bool first_assignment = false);
-    void declare_variable(const FlyString& name, DeclarationKind);
+
+    Reference get_reference(const FlyString& name);
 
     void gather_roots(Badge<Heap>, HashTable<Cell*>&);
 
     void enter_scope(const ScopeNode&, ArgumentVector, ScopeType);
     void exit_scope(const ScopeNode&);
 
-    Value call(Function*, Value this_value = {}, const Vector<Value>& arguments = {});
+    Value call(Function&, Value this_value = {}, Optional<MarkedValueList> arguments = {});
 
     CallFrame& push_call_frame()
     {
-        m_call_stack.append({ {}, js_undefined(), {} });
+        m_call_stack.append({ {}, js_undefined(), {}, nullptr });
         return m_call_stack.last();
     }
     void pop_call_frame() { m_call_stack.take_last(); }
     const CallFrame& call_frame() { return m_call_stack.last(); }
-    const Vector<CallFrame> call_stack() { return m_call_stack; }
+    const Vector<CallFrame>& call_stack() { return m_call_stack; }
+
+    void push_environment(LexicalEnvironment*);
+    void pop_environment();
+
+    const LexicalEnvironment* current_environment() const { return m_call_stack.last().environment; }
+    LexicalEnvironment* current_environment() { return m_call_stack.last().environment; }
 
     size_t argument_count() const
     {
@@ -136,13 +142,6 @@ public:
         return m_call_stack.last().this_value;
     }
 
-    Shape* empty_object_shape() { return m_empty_object_shape; }
-
-#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \
-    Object* snake_name##_prototype() { return m_##snake_name##_prototype; }
-    JS_ENUMERATE_BUILTIN_TYPES
-#undef __JS_ENUMERATE
-
     Exception* exception()
     {
         return m_exception;
@@ -152,7 +151,7 @@ public:
     template<typename T, typename... Args>
     Value throw_exception(Args&&... args)
     {
-        return throw_exception(heap().allocate<T>(forward<Args>(args)...));
+        return throw_exception(T::create(global_object(), forward<Args>(args)...));
     }
 
     Value throw_exception(Exception*);
@@ -172,13 +171,6 @@ private:
 
     Vector<ScopeFrame> m_scope_stack;
     Vector<CallFrame> m_call_stack;
-
-    Shape* m_empty_object_shape { nullptr };
-
-#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \
-    Object* m_##snake_name##_prototype { nullptr };
-    JS_ENUMERATE_BUILTIN_TYPES
-#undef __JS_ENUMERATE
 
     Object* m_global_object { nullptr };
 

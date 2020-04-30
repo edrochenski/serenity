@@ -34,12 +34,18 @@
 namespace JS {
 
 ObjectPrototype::ObjectPrototype()
+    : Object(nullptr)
 {
-    set_prototype(nullptr);
+}
 
-    put_native_function("hasOwnProperty", has_own_property, 1);
-    put_native_function("toString", to_string);
-    put_native_function("valueOf", value_of);
+void ObjectPrototype::initialize()
+{
+    // This must be called after the constructor has returned, so that the below code
+    // can find the ObjectPrototype through normal paths.
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+    put_native_function("hasOwnProperty", has_own_property, 1, attr);
+    put_native_function("toString", to_string, 0, attr);
+    put_native_function("valueOf", value_of, 0, attr);
 }
 
 ObjectPrototype::~ObjectPrototype()
@@ -50,8 +56,6 @@ Value ObjectPrototype::has_own_property(Interpreter& interpreter)
 {
     auto* this_object = interpreter.this_value().to_object(interpreter.heap());
     if (!this_object)
-        return {};
-    if (!interpreter.argument_count())
         return {};
     return Value(this_object->has_own_property(interpreter.argument(0).to_string()));
 }

@@ -37,9 +37,9 @@ namespace GUI {
 StatusBar::StatusBar(int label_count)
 {
     set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
-    set_preferred_size(0, 20);
+    set_preferred_size(0, 18);
     set_layout<HorizontalBoxLayout>();
-    layout()->set_margins({ 2, 2, 2, 2 });
+    layout()->set_margins({ 0, 0, 0, 0 });
     layout()->set_spacing(2);
 
     if (label_count < 1)
@@ -89,7 +89,7 @@ void StatusBar::paint_event(PaintEvent& event)
 {
     Painter painter(*this);
     painter.add_clip_rect(event.rect());
-    Gfx::StylePainter::paint_surface(painter, rect(), palette(), !spans_entire_window_horizontally());
+    painter.fill_rect(rect(), palette().button());
 }
 
 }

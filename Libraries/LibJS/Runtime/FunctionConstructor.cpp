@@ -30,14 +30,16 @@
 #include <LibJS/Parser.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/FunctionConstructor.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/ScriptFunction.h>
 
 namespace JS {
 
 FunctionConstructor::FunctionConstructor()
+    : NativeFunction("Function", *interpreter().global_object().function_prototype())
 {
-    put("prototype", interpreter().function_prototype());
-    put("length", Value(1));
+    put("prototype", interpreter().global_object().function_prototype(), 0);
+    put("length", Value(1), Attribute::Configurable);
 }
 
 FunctionConstructor::~FunctionConstructor()
@@ -69,7 +71,7 @@ Value FunctionConstructor::construct(Interpreter& interpreter)
     auto function_expression = parser.parse_function_node<FunctionExpression>();
     if (parser.has_errors()) {
         // FIXME: The parser should expose parsing error strings rather than just fprintf()'ing them
-        return interpreter.heap().allocate<Error>("SyntaxError", "");
+        return Error::create(interpreter.global_object(), "SyntaxError", "");
     }
     return function_expression->execute(interpreter);
 }

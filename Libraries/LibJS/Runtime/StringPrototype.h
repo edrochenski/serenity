@@ -47,8 +47,16 @@ private:
     static Value to_string(Interpreter&);
     static Value pad_start(Interpreter&);
     static Value pad_end(Interpreter&);
+    static Value substring(Interpreter&);
 
     static Value length_getter(Interpreter&);
+
+    static Value trim(Interpreter&);
+    static Value trim_start(Interpreter&);
+    static Value trim_end(Interpreter&);
+    static Value concat(Interpreter&);
+    static Value includes(Interpreter&);
+    static Value slice(Interpreter&);
 };
 
 }

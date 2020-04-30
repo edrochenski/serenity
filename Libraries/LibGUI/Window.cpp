@@ -167,13 +167,13 @@ void Window::set_rect(const Gfx::Rect& a_rect)
             m_main_widget->resize(m_rect_when_windowless.size());
         return;
     }
-    WindowServerConnection::the().send_sync<Messages::WindowServer::SetWindowRect>(m_window_id, a_rect);
-    if (m_back_bitmap && m_back_bitmap->size() != a_rect.size())
+    auto window_rect = WindowServerConnection::the().send_sync<Messages::WindowServer::SetWindowRect>(m_window_id, a_rect)->rect();
+    if (m_back_bitmap && m_back_bitmap->size() != window_rect.size())
         m_back_bitmap = nullptr;
-    if (m_front_bitmap && m_front_bitmap->size() != a_rect.size())
+    if (m_front_bitmap && m_front_bitmap->size() != window_rect.size())
         m_front_bitmap = nullptr;
     if (m_main_widget)
-        m_main_widget->resize(a_rect.size());
+        m_main_widget->resize(window_rect.size());
 }
 
 void Window::set_window_type(WindowType window_type)
@@ -251,10 +251,12 @@ void Window::event(Core::Event& event)
         bool created_new_backing_store = !m_back_bitmap;
         if (!m_back_bitmap) {
             m_back_bitmap = create_backing_bitmap(paint_event.window_size());
+            ASSERT(m_back_bitmap);
         } else if (m_double_buffering_enabled) {
             bool still_has_pixels = m_back_bitmap->shared_buffer()->set_nonvolatile();
             if (!still_has_pixels) {
                 m_back_bitmap = create_backing_bitmap(paint_event.window_size());
+                ASSERT(m_back_bitmap);
                 created_new_backing_store = true;
             }
         }
@@ -514,6 +516,7 @@ void Window::flip(const Vector<Gfx::Rect, 32>& dirty_rects)
 
     if (!m_back_bitmap || m_back_bitmap->size() != m_front_bitmap->size()) {
         m_back_bitmap = create_backing_bitmap(m_front_bitmap->size());
+        ASSERT(m_back_bitmap);
         memcpy(m_back_bitmap->scanline(0), m_front_bitmap->scanline(0), m_front_bitmap->size_in_bytes());
         m_back_bitmap->shared_buffer()->set_volatile();
         return;
@@ -527,7 +530,7 @@ void Window::flip(const Vector<Gfx::Rect, 32>& dirty_rects)
     m_back_bitmap->shared_buffer()->set_volatile();
 }
 
-NonnullRefPtr<Gfx::Bitmap> Window::create_shared_bitmap(Gfx::BitmapFormat format, const Gfx::Size& size)
+RefPtr<Gfx::Bitmap> Window::create_shared_bitmap(Gfx::BitmapFormat format, const Gfx::Size& size)
 {
     ASSERT(WindowServerConnection::the().server_pid());
     ASSERT(!size.is_empty());
@@ -539,7 +542,7 @@ NonnullRefPtr<Gfx::Bitmap> Window::create_shared_bitmap(Gfx::BitmapFormat format
     return Gfx::Bitmap::create_with_shared_buffer(format, *shared_buffer, size);
 }
 
-NonnullRefPtr<Gfx::Bitmap> Window::create_backing_bitmap(const Gfx::Size& size)
+RefPtr<Gfx::Bitmap> Window::create_backing_bitmap(const Gfx::Size& size)
 {
     auto format = m_has_alpha_channel ? Gfx::BitmapFormat::RGBA32 : Gfx::BitmapFormat::RGB32;
     return create_shared_bitmap(format, size);
@@ -561,6 +564,7 @@ void Window::set_icon(const Gfx::Bitmap* icon)
         return;
 
     m_icon = create_shared_bitmap(Gfx::BitmapFormat::RGBA32, icon->size());
+    ASSERT(m_icon);
     {
         Painter painter(*m_icon);
         painter.blit({ 0, 0 }, *icon, icon->rect());

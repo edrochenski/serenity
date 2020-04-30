@@ -38,13 +38,31 @@ public:
     virtual Value call(Interpreter&) = 0;
     virtual Value construct(Interpreter&) = 0;
     virtual const FlyString& name() const = 0;
+    virtual LexicalEnvironment* create_environment() = 0;
+
+    virtual void visit_children(Visitor&) override;
+
+    BoundFunction* bind(Value bound_this_value, Vector<Value> arguments);
+
+    Value bound_this() const
+    {
+        return m_bound_this;
+    }
+
+    const Vector<Value>& bound_arguments() const
+    {
+        return m_bound_arguments;
+    }
 
 protected:
-    Function();
+    explicit Function(Object& prototype);
+    explicit Function(Object& prototype, Value bound_this, Vector<Value> bound_arguments);
     virtual const char* class_name() const override { return "Function"; }
 
 private:
     virtual bool is_function() const final { return true; }
+    Value m_bound_this;
+    Vector<Value> m_bound_arguments;
 };
 
 }

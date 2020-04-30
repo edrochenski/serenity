@@ -1,3 +1,5 @@
+load("test-common.js");
+
 try {
     var o = {};
     Object.defineProperty(o, "foo", { value: 1, writable: false, enumerable: false });
@@ -24,12 +26,11 @@ try {
     assert(d.writable === true);
     assert(d.value === "ho");
 
-    try {
+    assertThrowsError(() => {
         Object.defineProperty(o, "bar", { value: "xx", enumerable: false });
-        assert(false);
-    } catch (e) {
-        assert(e.name === "TypeError");
-    }
+    }, {
+        error: TypeError
+    });
 
     Object.defineProperty(o, "baz", { value: 9, configurable: true, writable: false });
     Object.defineProperty(o, "baz", { configurable: true, writable: true });

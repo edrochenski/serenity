@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/Base64.h>
 #include <AK/SharedBuffer.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/File.h>
@@ -68,8 +69,23 @@ void ResourceLoader::load_sync(const URL& url, Function<void(const ByteBuffer&)>
 void ResourceLoader::load(const URL& url, Function<void(const ByteBuffer&)> success_callback, Function<void(const String&)> error_callback)
 {
     if (is_port_blocked(url.port())) {
-	dbg() << "ResourceLoader::load: Error: blocked port " << url.port() << " for URL: " << url;
-	return;
+        dbg() << "ResourceLoader::load: Error: blocked port " << url.port() << " for URL: " << url;
+        return;
+    }
+
+    if (url.protocol() == "data") {
+        dbg() << "ResourceLoader loading a data URL with mime-type: '" << url.data_mime_type() << "', base64=" << url.data_payload_is_base64() << ", payload='" << url.data_payload() << "'";
+
+        ByteBuffer data;
+        if (url.data_payload_is_base64())
+            data = decode_base64(url.data_payload());
+        else
+            data = url.data_payload().to_byte_buffer();
+
+        deferred_invoke([data = move(data), success_callback = move(success_callback)](auto&) {
+            success_callback(data);
+        });
+        return;
     }
 
     if (url.protocol() == "file") {
@@ -117,7 +133,8 @@ void ResourceLoader::load(const URL& url, Function<void(const ByteBuffer&)> succ
         error_callback(String::format("Protocol not implemented: %s", url.protocol().characters()));
 }
 
-bool ResourceLoader::is_port_blocked(int port) {
+bool ResourceLoader::is_port_blocked(int port)
+{
     int ports[] { 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42,
         43, 53, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113,
         115, 117, 119, 123, 135, 139, 143, 179, 389, 465, 512, 513, 514,

@@ -29,6 +29,7 @@
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/Function.h>
+#include <LibJS/Runtime/Shape.h>
 #include <LibWeb/Bindings/DocumentWrapper.h>
 #include <LibWeb/Bindings/NavigatorObject.h>
 #include <LibWeb/Bindings/WindowObject.h>
@@ -43,20 +44,27 @@ namespace Bindings {
 WindowObject::WindowObject(Window& impl)
     : m_impl(impl)
 {
-    put("window", this);
-    put_native_property("document", document_getter, document_setter);
+}
+
+void WindowObject::initialize()
+{
+    GlobalObject::initialize();
+
+    put("window", this, JS::Attribute::Enumerable);
+    put_native_property("document", document_getter, document_setter, JS::Attribute::Enumerable);
     put_native_function("alert", alert);
+    put_native_function("confirm", confirm);
     put_native_function("setInterval", set_interval, 1);
     put_native_function("setTimeout", set_timeout, 1);
     put_native_function("requestAnimationFrame", request_animation_frame, 1);
     put_native_function("cancelAnimationFrame", cancel_animation_frame, 1);
 
-    put("navigator", heap().allocate<NavigatorObject>());
+    put("navigator", heap().allocate<NavigatorObject>(), JS::Attribute::Enumerable | JS::Attribute::Configurable);
 
     m_xhr_prototype = heap().allocate<XMLHttpRequestPrototype>();
     m_xhr_constructor = heap().allocate<XMLHttpRequestConstructor>();
-    m_xhr_constructor->put("prototype", m_xhr_prototype);
-    put("XMLHttpRequest", m_xhr_constructor);
+    m_xhr_constructor->put("prototype", m_xhr_prototype, 0);
+    put("XMLHttpRequest", m_xhr_constructor, JS::Attribute::Writable | JS::Attribute::Configurable);
 }
 
 WindowObject::~WindowObject()
@@ -78,7 +86,7 @@ static Window* impl_from(JS::Interpreter& interpreter)
         return nullptr;
     }
     if (StringView("WindowObject") != this_object->class_name()) {
-        interpreter.throw_exception<JS::Error>("TypeError", "That's not a WindowObject, bro.");
+        interpreter.throw_exception<JS::TypeError>("That's not a WindowObject, bro.");
         return nullptr;
     }
     return &static_cast<WindowObject*>(this_object)->impl();
@@ -89,11 +97,22 @@ JS::Value WindowObject::alert(JS::Interpreter& interpreter)
     auto* impl = impl_from(interpreter);
     if (!impl)
         return {};
-    auto& arguments = interpreter.call_frame().arguments;
-    if (arguments.size() < 1)
-        return {};
-    impl->alert(arguments[0].to_string());
+    String message = "";
+    if (interpreter.argument_count())
+        message = interpreter.argument(0).to_string();
+    impl->alert(message);
     return JS::js_undefined();
+}
+
+JS::Value WindowObject::confirm(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+    String message = "";
+    if (interpreter.argument_count())
+        message = interpreter.argument(0).to_string();
+    return JS::Value(impl->confirm(message));
 }
 
 JS::Value WindowObject::set_interval(JS::Interpreter& interpreter)
@@ -108,7 +127,7 @@ JS::Value WindowObject::set_interval(JS::Interpreter& interpreter)
     if (!callback_object)
         return {};
     if (!callback_object->is_function())
-        return interpreter.throw_exception<JS::Error>("TypeError", "Not a function");
+        return interpreter.throw_exception<JS::TypeError>("Not a function");
     impl->set_interval(*static_cast<JS::Function*>(callback_object), arguments[1].to_i32());
     return JS::js_undefined();
 }
@@ -125,7 +144,7 @@ JS::Value WindowObject::set_timeout(JS::Interpreter& interpreter)
     if (!callback_object)
         return {};
     if (!callback_object->is_function())
-        return interpreter.throw_exception<JS::Error>("TypeError", "Not a function");
+        return interpreter.throw_exception<JS::TypeError>("Not a function");
 
     i32 interval = 0;
     if (interpreter.argument_count() >= 2)
@@ -147,7 +166,7 @@ JS::Value WindowObject::request_animation_frame(JS::Interpreter& interpreter)
     if (!callback_object)
         return {};
     if (!callback_object->is_function())
-        return interpreter.throw_exception<JS::Error>("TypeError", "Not a function");
+        return interpreter.throw_exception<JS::TypeError>("Not a function");
     return JS::Value(impl->request_animation_frame(*static_cast<JS::Function*>(callback_object)));
 }
 

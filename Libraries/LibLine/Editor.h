@@ -53,14 +53,68 @@ struct KeyCallback {
     Function<bool(Editor&)> callback;
 };
 
+struct CompletionSuggestion {
+    // intentionally not explicit (allows suggesting bare strings)
+    CompletionSuggestion(const String& completion)
+        : text(completion)
+        , trailing_trivia("")
+    {
+    }
+    CompletionSuggestion(const StringView& completion, const StringView& trailing_trivia)
+        : text(completion)
+        , trailing_trivia(trailing_trivia)
+    {
+    }
+
+    bool operator==(const CompletionSuggestion& suggestion) const
+    {
+        return suggestion.text == text;
+    }
+
+    String text;
+    String trailing_trivia;
+};
+
+struct Configuration {
+    enum TokenSplitMechanism {
+        Spaces,
+        UnescapedSpaces,
+    };
+    enum RefreshBehaviour {
+        Lazy,
+        Eager,
+    };
+
+    Configuration()
+    {
+    }
+
+    template<typename Arg, typename... Rest>
+    Configuration(Arg arg, Rest... rest)
+        : Configuration(rest...)
+    {
+        set(arg);
+    }
+
+    void set(RefreshBehaviour refresh) { refresh_behaviour = refresh; }
+    void set(TokenSplitMechanism split) { split_mechanism = split; }
+
+    RefreshBehaviour refresh_behaviour { RefreshBehaviour::Lazy };
+    TokenSplitMechanism split_mechanism { TokenSplitMechanism::Spaces };
+};
+
 class Editor {
 public:
-    Editor();
+    explicit Editor(Configuration configuration = {});
     ~Editor();
+
+    String get_line(const String& prompt);
 
     void initialize()
     {
-        ASSERT(!m_initialized);
+        if (m_initialized)
+            return;
+
         struct termios termios;
         tcgetattr(0, &termios);
         m_default_termios = termios; // grab a copy to restore
@@ -72,20 +126,22 @@ public:
         m_initialized = true;
     }
 
-    String get_line(const String& prompt);
-
     void add_to_history(const String&);
     const Vector<String>& history() const { return m_history; }
 
     void register_character_input_callback(char ch, Function<bool(Editor&)> callback);
 
-    Function<Vector<String>(const String&)> on_tab_complete_first_token;
-    Function<Vector<String>(const String&)> on_tab_complete_other_token;
+    Function<Vector<CompletionSuggestion>(const String&)> on_tab_complete_first_token;
+    Function<Vector<CompletionSuggestion>(const String&)> on_tab_complete_other_token;
     Function<void(Editor&)> on_display_refresh;
 
     // FIXME: we will have to kindly ask our instantiators to set our signal handlers
     // since we can not do this cleanly ourselves (signal() limitation: cannot give member functions)
-    void interrupted() { m_was_interrupted = true; }
+    void interrupted()
+    {
+        if (m_is_editing)
+            m_was_interrupted = true;
+    }
     void resized() { m_was_resized = true; }
 
     size_t cursor() const { return m_cursor; }
@@ -105,7 +161,6 @@ public:
     void clear_line();
     void insert(const String&);
     void insert(const char);
-    void cut_mismatching_chars(String& completion, const String& other, size_t start_compare);
     void stylize(const Span&, const Style&);
     void strip_styles()
     {
@@ -122,6 +177,13 @@ public:
     const struct termios& termios() const { return m_termios; }
     const struct termios& default_termios() const { return m_default_termios; }
 
+    void finish()
+    {
+        m_finish = true;
+    }
+
+    bool is_editing() const { return m_is_editing; }
+
 private:
     void vt_save_cursor();
     void vt_restore_cursor();
@@ -134,6 +196,22 @@ private:
 
     Style find_applicable_style(size_t offset) const;
 
+    bool search(const StringView&, bool allow_empty = false, bool from_beginning = false);
+    inline void end_search()
+    {
+        m_is_searching = false;
+        m_refresh_needed = true;
+        m_search_offset = 0;
+        if (m_reset_buffer_on_search_end) {
+            m_buffer.clear();
+            for (auto ch : m_pre_search_buffer)
+                m_buffer.append(ch);
+            m_cursor = m_pre_search_cursor;
+        }
+        m_reset_buffer_on_search_end = true;
+        m_search_editor = nullptr;
+    }
+
     void reset()
     {
         m_origin_x = 0;
@@ -144,6 +222,14 @@ private:
     }
 
     void refresh_display();
+    void cleanup();
+
+    void restore()
+    {
+        ASSERT(m_initialized);
+        tcsetattr(0, TCSANOW, &m_default_termios);
+        m_initialized = false;
+    }
 
     size_t current_prompt_length() const
     {
@@ -152,12 +238,12 @@ private:
 
     size_t num_lines() const
     {
-        return (m_cached_buffer_size + m_num_columns + current_prompt_length()) / m_num_columns;
+        return (m_cached_buffer_size + m_num_columns + current_prompt_length() - 1) / m_num_columns;
     }
 
     size_t cursor_line() const
     {
-        return (m_drawn_cursor + m_num_columns + current_prompt_length()) / m_num_columns;
+        return (m_drawn_cursor + m_num_columns + current_prompt_length() - 1) / m_num_columns;
     }
 
     size_t offset_in_line() const
@@ -176,10 +262,21 @@ private:
     void recalculate_origin();
     void reposition_cursor();
 
+    bool m_finish { false };
+
+    OwnPtr<Editor> m_search_editor;
+    bool m_is_searching { false };
+    bool m_reset_buffer_on_search_end { true };
+    size_t m_search_offset { 0 };
+    bool m_searching_backwards { true };
+    size_t m_pre_search_cursor { 0 };
+    Vector<char, 1024> m_pre_search_buffer;
+
     Vector<char, 1024> m_buffer;
     ByteBuffer m_pending_chars;
     size_t m_cursor { 0 };
     size_t m_drawn_cursor { 0 };
+    size_t m_inline_search_cursor { 0 };
     size_t m_chars_inserted_in_the_middle { 0 };
     size_t m_times_tab_pressed { 0 };
     size_t m_num_columns { 0 };
@@ -188,6 +285,7 @@ private:
     size_t m_old_prompt_length { 0 };
     size_t m_cached_buffer_size { 0 };
     size_t m_lines_used_for_last_suggestions { 0 };
+    size_t m_prompt_lines_at_suggestion_initiation { 0 };
     bool m_cached_prompt_valid { false };
 
     // exact position before our prompt in the terminal
@@ -195,10 +293,15 @@ private:
     size_t m_origin_y { 0 };
 
     String m_new_prompt;
-    Vector<String> m_suggestions;
-    String m_last_shown_suggestion;
+    Vector<CompletionSuggestion> m_suggestions;
+    CompletionSuggestion m_last_shown_suggestion { String::empty() };
+    size_t m_last_shown_suggestion_display_length { 0 };
+    bool m_last_shown_suggestion_was_complete { false };
     size_t m_next_suggestion_index { 0 };
     size_t m_next_suggestion_invariant_offset { 0 };
+    size_t m_largest_common_suggestion_prefix_length { 0 };
+
+    bool m_always_refresh { false };
 
     enum class TabDirection {
         Forward,
@@ -210,8 +313,8 @@ private:
 
     // TODO: handle signals internally
     struct termios m_termios, m_default_termios;
-    bool m_was_interrupted = false;
-    bool m_was_resized = false;
+    bool m_was_interrupted { false };
+    bool m_was_resized { false };
 
     // FIXME: This should be something more take_first()-friendly.
     Vector<String> m_history;
@@ -231,6 +334,10 @@ private:
 
     bool m_initialized { false };
     bool m_refresh_needed { false };
+
+    bool m_is_editing { false };
+
+    Configuration m_configuration;
 };
 
 }

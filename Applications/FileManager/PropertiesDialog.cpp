@@ -73,18 +73,16 @@ PropertiesDialog::PropertiesDialog(GUI::FileSystemModel& model, String path, boo
     m_icon->set_preferred_size(32, 32);
 
     m_name = file_path.basename();
+    m_path = file_path.string();
 
     m_name_box = file_container.add<GUI::TextBox>();
     m_name_box->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
     m_name_box->set_preferred_size({ 0, 22 });
     m_name_box->set_text(m_name);
-    m_name_box->on_change = [&, disable_rename]() {
-        if (disable_rename) {
-            m_name_box->set_text(m_name); //FIXME: GUI::TextBox does not support set_enabled yet...
-        } else {
-            m_name_dirty = m_name != m_name_box->text();
-            m_apply_button->set_enabled(true);
-        }
+    m_name_box->set_enabled(!disable_rename);
+    m_name_box->on_change = [&]() {
+        m_name_dirty = m_name != m_name_box->text();
+        m_apply_button->set_enabled(true);
     };
 
     set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/properties.png"));
@@ -96,9 +94,20 @@ PropertiesDialog::PropertiesDialog(GUI::FileSystemModel& model, String path, boo
         return;
     }
 
-    struct passwd* user_pw = getpwuid(st.st_uid);
-    struct group* group_gr = getgrgid(st.st_gid);
-    ASSERT(user_pw && group_gr);
+    String owner_name;
+    String group_name;
+
+    if (auto* pw = getpwuid(st.st_uid)) {
+        owner_name = pw->pw_name;
+    } else {
+        owner_name = "n/a";
+    }
+
+    if (auto* gr = getgrgid(st.st_gid)) {
+        group_name = gr->gr_name;
+    } else {
+        group_name = "n/a";
+    }
 
     m_mode = st.st_mode;
 
@@ -108,16 +117,17 @@ PropertiesDialog::PropertiesDialog(GUI::FileSystemModel& model, String path, boo
 
     if (S_ISLNK(m_mode)) {
         char link_destination[PATH_MAX];
-        if (readlink(path.characters(), link_destination, sizeof(link_destination)) < 0) {
+        ssize_t len = readlink(path.characters(), link_destination, sizeof(link_destination));
+        if (len < 0) {
             perror("readlink");
         } else {
-            properties.append({ "Link target:", link_destination });
+            properties.append({ "Link target:", String(link_destination, len) });
         }
     }
 
     properties.append({ "Size:", String::format("%zu bytes", st.st_size) });
-    properties.append({ "Owner:", String::format("%s (%lu)", user_pw->pw_name, static_cast<u32>(user_pw->pw_uid)) });
-    properties.append({ "Group:", String::format("%s (%lu)", group_gr->gr_name, static_cast<u32>(group_gr->gr_gid)) });
+    properties.append({ "Owner:", String::format("%s (%lu)", owner_name.characters(), st.st_uid) });
+    properties.append({ "Group:", String::format("%s (%lu)", group_name.characters(), st.st_gid) });
     properties.append({ "Created at:", GUI::FileSystemModel::timestamp_string(st.st_ctime) });
     properties.append({ "Last modified:", GUI::FileSystemModel::timestamp_string(st.st_mtime) });
 
@@ -225,17 +235,28 @@ void PropertiesDialog::make_permission_checkboxes(GUI::Widget& parent, Permissio
     auto& label = widget.add<GUI::Label>(label_string);
     label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
 
+    struct stat st;
+    if (lstat(m_path.characters(), &st)) {
+        perror("stat");
+        return;
+    }
+
+    auto can_edit_checkboxes = st.st_uid == getuid();
+
     auto& box_read = widget.add<GUI::CheckBox>("Read");
     box_read.set_checked(mode & masks.read);
     box_read.on_checked = [&, masks](bool checked) { permission_changed(masks.read, checked); };
+    box_read.set_enabled(can_edit_checkboxes);
 
     auto& box_write = widget.add<GUI::CheckBox>("Write");
     box_write.set_checked(mode & masks.write);
     box_write.on_checked = [&, masks](bool checked) { permission_changed(masks.write, checked); };
+    box_write.set_enabled(can_edit_checkboxes);
 
     auto& box_execute = widget.add<GUI::CheckBox>("Execute");
     box_execute.set_checked(mode & masks.execute);
     box_execute.on_checked = [&, masks](bool checked) { permission_changed(masks.execute, checked); };
+    box_execute.set_enabled(can_edit_checkboxes);
 }
 
 void PropertiesDialog::make_property_value_pairs(const Vector<PropertyValuePair>& pairs, GUI::Widget& parent)

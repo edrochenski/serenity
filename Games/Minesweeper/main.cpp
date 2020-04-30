@@ -80,7 +80,7 @@ int main(int argc, char** argv)
         window->resize(size);
     });
 
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
 
     auto& app_menu = menubar->add_menu("Minesweeper");
 
@@ -90,12 +90,9 @@ int main(int argc, char** argv)
 
     app_menu.add_separator();
 
-    NonnullRefPtr<GUI::Action> chord_toggler_action = GUI::Action::create("Single-click chording", [&](const GUI::Action&) {
-        bool toggled = !field.is_single_chording();
-        field.set_single_chording(toggled);
-        chord_toggler_action->set_checked(toggled);
+    auto chord_toggler_action = GUI::Action::create_checkable("Single-click chording", [&](auto& action) {
+        field.set_single_chording(!action.is_checked());
     });
-    chord_toggler_action->set_checkable(true);
     chord_toggler_action->set_checked(field.is_single_chording());
 
     app_menu.add_action(*chord_toggler_action);

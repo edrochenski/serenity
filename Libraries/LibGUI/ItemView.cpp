@@ -39,6 +39,7 @@ namespace GUI {
 
 ItemView::ItemView()
 {
+    set_fill_with_background_color(true);
     set_background_role(ColorRole::Base);
     set_foreground_role(ColorRole::BaseText);
     horizontal_scrollbar().set_visible(false);
@@ -261,8 +262,8 @@ void ItemView::second_paint_event(PaintEvent& event)
     painter.translate(-horizontal_scrollbar().value(), -vertical_scrollbar().value());
 
     auto rubber_band_rect = Gfx::Rect::from_two_points(m_rubber_band_origin, m_rubber_band_current);
-    painter.fill_rect(rubber_band_rect, parent_widget()->palette().rubber_band_fill());
-    painter.draw_rect(rubber_band_rect, parent_widget()->palette().rubber_band_border());
+    painter.fill_rect(rubber_band_rect, palette().rubber_band_fill());
+    painter.draw_rect(rubber_band_rect, palette().rubber_band_border());
 }
 
 void ItemView::paint_event(PaintEvent& event)
@@ -273,7 +274,8 @@ void ItemView::paint_event(PaintEvent& event)
     Painter painter(*this);
     painter.add_clip_rect(widget_inner_rect());
     painter.add_clip_rect(event.rect());
-    painter.fill_rect(event.rect(), widget_background_color);
+    if (fill_with_background_color())
+        painter.fill_rect(event.rect(), widget_background_color);
     painter.translate(frame_thickness(), frame_thickness());
     painter.translate(-horizontal_scrollbar().value(), -vertical_scrollbar().value());
 

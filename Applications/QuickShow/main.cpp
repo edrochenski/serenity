@@ -38,8 +38,10 @@
 #include <LibGUI/MenuBar.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/ToolBar.h>
+#include <LibGUI/ToolBarContainer.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/Palette.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -68,10 +70,12 @@ int main(int argc, char** argv)
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-image.png"));
 
     auto& root_widget = window->set_main_widget<GUI::Widget>();
+    root_widget.set_fill_with_background_color(true);
     root_widget.set_layout<GUI::VerticalBoxLayout>();
-    root_widget.layout()->set_spacing(0);
+    root_widget.layout()->set_spacing(2);
 
-    auto& main_toolbar = root_widget.add<GUI::ToolBar>();
+    auto& toolbar_container = root_widget.add<GUI::ToolBarContainer>();
+    auto& main_toolbar = toolbar_container.add<GUI::ToolBar>();
 
     auto& widget = root_widget.add<QSWidget>();
     widget.on_scale_change = [&](int scale) {
@@ -189,7 +193,7 @@ int main(int argc, char** argv)
     auto full_sceen_action = GUI::CommonActions::make_fullscreen_action(
         [&](auto&) {
             window->set_fullscreen(!window->is_fullscreen());
-            main_toolbar.set_visible(!window->is_fullscreen());
+            toolbar_container.set_visible(!window->is_fullscreen());
         });
 
     auto zoom_in_action = GUI::Action::create("Zoom In", { Mod_None, Key_Plus }, Gfx::Bitmap::load_from_file("/res/icons/16x16/zoom-in.png"),
@@ -209,13 +213,7 @@ int main(int argc, char** argv)
 
     auto hide_show_toolbar_action = GUI::Action::create("Hide/Show Toolbar", { Mod_Ctrl, Key_T },
         [&](auto&) {
-            main_toolbar.set_visible(!main_toolbar.is_visible());
-
-            if (main_toolbar.is_visible()) {
-                widget.set_toolbar_height(main_toolbar.height());
-            } else {
-                widget.set_toolbar_height(0);
-            }
+            toolbar_container.set_visible(!toolbar_container.is_visible());
         });
 
     auto about_action = GUI::Action::create("About",
@@ -234,7 +232,7 @@ int main(int argc, char** argv)
     main_toolbar.add_action(zoom_in_action);
     main_toolbar.add_action(zoom_out_action);
 
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
 
     auto& app_menu = menubar->add_menu("QuickShow");
     app_menu.add_action(open_action);

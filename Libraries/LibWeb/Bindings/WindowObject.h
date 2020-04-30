@@ -35,6 +35,7 @@ namespace Bindings {
 class WindowObject final : public JS::GlobalObject {
 public:
     explicit WindowObject(Window&);
+    virtual void initialize() override;
     virtual ~WindowObject() override;
 
     Window& impl() { return *m_impl; }
@@ -51,6 +52,7 @@ private:
     static void document_setter(JS::Interpreter&, JS::Value);
 
     static JS::Value alert(JS::Interpreter&);
+    static JS::Value confirm(JS::Interpreter&);
     static JS::Value set_interval(JS::Interpreter&);
     static JS::Value set_timeout(JS::Interpreter&);
     static JS::Value request_animation_frame(JS::Interpreter&);

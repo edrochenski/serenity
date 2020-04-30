@@ -28,6 +28,7 @@
 #include <AK/NonnullOwnPtr.h>
 #include <AK/OwnPtr.h>
 #include <Kernel/Scheduler.h>
+#include <Kernel/Time/TimeManagement.h>
 #include <Kernel/TimerQueue.h>
 
 namespace Kernel {
@@ -41,38 +42,58 @@ TimerQueue& TimerQueue::the()
     return *s_the;
 }
 
-u64 TimerQueue::add_timer(NonnullOwnPtr<Timer>&& timer)
+TimerQueue::TimerQueue()
 {
-    ASSERT(timer->expires > g_uptime);
+    m_ticks_per_second = TimeManagement::the().ticks_per_second();
+}
+
+TimerId TimerQueue::add_timer(NonnullOwnPtr<Timer>&& timer)
+{
+    u64 timer_expiration = timer->expires;
+    ASSERT(timer_expiration >= g_uptime);
 
     timer->id = ++m_timer_id_count;
 
-    auto following_timer = m_timer_queue.find([&timer](auto& other) { return other->expires > timer->expires; });
-    if (following_timer.is_end())
+    if (m_timer_queue.is_empty()) {
         m_timer_queue.append(move(timer));
-    else
-        m_timer_queue.insert_before(following_timer, move(timer));
+        m_next_timer_due = timer_expiration;
+    } else {
+        auto following_timer = m_timer_queue.find([&timer_expiration](auto& other) { return other->expires > timer_expiration; });
 
-    update_next_timer_due();
+        if (following_timer.is_end()) {
+            m_timer_queue.append(move(timer));
+        } else {
+            auto next_timer_needs_update = following_timer.is_begin();
+            m_timer_queue.insert_before(following_timer, move(timer));
+
+            if (next_timer_needs_update)
+                m_next_timer_due = timer_expiration;
+        }
+    }
 
     return m_timer_id_count;
 }
 
-u64 TimerQueue::add_timer(u64 duration, TimeUnit unit, Function<void()>&& callback)
+TimerId TimerQueue::add_timer(timeval& deadline, Function<void()>&& callback)
 {
     NonnullOwnPtr timer = make<Timer>();
-    timer->expires = g_uptime + duration * unit;
+    timer->expires = g_uptime + seconds_to_ticks(deadline.tv_sec) + microseconds_to_ticks(deadline.tv_usec);
     timer->callback = move(callback);
     return add_timer(move(timer));
 }
 
-bool TimerQueue::cancel_timer(u64 id)
+bool TimerQueue::cancel_timer(TimerId id)
 {
     auto it = m_timer_queue.find([id](auto& timer) { return timer->id == id; });
     if (it.is_end())
         return false;
+
+    auto was_next_timer = it.is_begin();
     m_timer_queue.remove(it);
-    update_next_timer_due();
+
+    if (was_next_timer)
+        update_next_timer_due();
+
     return true;
 }
 

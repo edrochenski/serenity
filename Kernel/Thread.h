@@ -36,6 +36,7 @@
 #include <Kernel/Forward.h>
 #include <Kernel/KResult.h>
 #include <Kernel/Scheduler.h>
+#include <Kernel/ThreadTracer.h>
 #include <Kernel/UnixTypes.h>
 #include <LibC/fd_set.h>
 
@@ -63,6 +64,9 @@ struct ThreadSpecificData {
 #define THREAD_PRIORITY_MAX 99
 
 class Thread {
+    AK_MAKE_NONCOPYABLE(Thread);
+    AK_MAKE_NONMOVABLE(Thread);
+
     friend class Process;
     friend class Scheduler;
 
@@ -265,6 +269,9 @@ public:
 
     bool is_stopped() const { return m_state == Stopped; }
     bool is_blocked() const { return m_state == Blocked; }
+    bool has_blocker() const { return m_blocker != nullptr; }
+    const Blocker& blocker() const;
+
     bool in_kernel() const { return (m_tss.cs & 0x03) == 0; }
 
     u32 frame_ptr() const { return m_tss.ebp; }
@@ -288,6 +295,7 @@ public:
         WokeNormally,
         InterruptedBySignal,
         InterruptedByDeath,
+        InterruptedByTimeout,
     };
 
     template<typename T, class... Args>
@@ -324,7 +332,7 @@ public:
         return block<ConditionBlocker>(state_string, move(condition));
     }
 
-    void wait_on(WaitQueue& queue, Atomic<bool>* lock = nullptr, Thread* beneficiary = nullptr, const char* reason = nullptr);
+    BlockResult wait_on(WaitQueue& queue, timeval* timeout = nullptr, Atomic<bool>* lock = nullptr, Thread* beneficiary = nullptr, const char* reason = nullptr);
     void wake_from_queue();
 
     void unblock();

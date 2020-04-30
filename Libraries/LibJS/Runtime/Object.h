@@ -32,27 +32,41 @@
 #include <LibJS/Runtime/Cell.h>
 #include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/PropertyName.h>
+#include <LibJS/Runtime/Shape.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
 
+const u8 default_attributes = Attribute::Configurable | Attribute::Writable | Attribute::Enumerable;
+
 class Object : public Cell {
 public:
-    Object();
+    static Object* create_empty(Interpreter&, GlobalObject&);
+
+    explicit Object(Object* prototype);
     virtual ~Object();
 
     Shape& shape() { return *m_shape; }
     const Shape& shape() const { return *m_shape; }
 
-    Optional<Value> get_by_index(i32 property_index) const;
-    Optional<Value> get(const FlyString& property_name) const;
-    Optional<Value> get(PropertyName) const;
+    Value delete_property(PropertyName);
 
-    void put_by_index(i32 property_index, Value);
-    void put(const FlyString& property_name, Value);
-    void put(PropertyName, Value);
+    virtual Value get_by_index(i32 property_index) const;
+    Value get(const FlyString& property_name) const;
+    Value get(PropertyName) const;
 
-    Optional<Value> get_own_property(const Object& this_object, const FlyString& property_name) const;
+    virtual void put_by_index(i32 property_index, Value, u8 attributes = default_attributes);
+    void put(const FlyString& property_name, Value, u8 attributes = default_attributes);
+    void put(PropertyName, Value, u8 attributes = default_attributes);
+
+    Value get_own_property(const Object& this_object, const FlyString& property_name) const;
+
+    enum class GetOwnPropertyMode {
+        Key,
+        Value,
+        KeyAndValue,
+    };
+    Value get_enumerable_own_properties(const Object& this_object, GetOwnPropertyMode) const;
 
     enum class PutOwnPropertyMode {
         Put,
@@ -61,8 +75,8 @@ public:
 
     void put_own_property(Object& this_object, const FlyString& property_name, u8 attributes, Value, PutOwnPropertyMode);
 
-    void put_native_function(const FlyString& property_name, AK::Function<Value(Interpreter&)>, i32 length = 0);
-    void put_native_property(const FlyString& property_name, AK::Function<Value(Interpreter&)> getter, AK::Function<void(Interpreter&, Value)> setter);
+    void put_native_function(const FlyString& property_name, AK::Function<Value(Interpreter&)>, i32 length = 0, u8 attribute = default_attributes);
+    void put_native_property(const FlyString& property_name, AK::Function<Value(Interpreter&)> getter, AK::Function<void(Interpreter&, Value)> setter, u8 attribute = default_attributes);
 
     virtual bool is_array() const { return false; }
     virtual bool is_boolean() const { return false; }
@@ -70,6 +84,7 @@ public:
     virtual bool is_error() const { return false; }
     virtual bool is_function() const { return false; }
     virtual bool is_native_function() const { return false; }
+    virtual bool is_bound_function() const { return false; }
     virtual bool is_native_property() const { return false; }
     virtual bool is_string_object() const { return false; }
 
@@ -99,6 +114,7 @@ public:
 
 private:
     void set_shape(Shape&);
+    void ensure_shape_is_unique();
 
     Shape* m_shape { nullptr };
     Vector<Value> m_storage;

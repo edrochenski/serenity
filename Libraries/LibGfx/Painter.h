@@ -51,6 +51,7 @@ public:
     void draw_rect(const Rect&, Color, bool rough = false);
     void draw_bitmap(const Point&, const CharacterBitmap&, Color = Color());
     void draw_bitmap(const Point&, const GlyphBitmap&, Color = Color());
+    void draw_triangle(const Point&, const Point&, const Point&, Color);
     void draw_ellipse_intersecting(const Rect&, Color, int thickness = 1);
     void set_pixel(const Point&, Color);
     void draw_line(const Point&, const Point&, Color, int thickness = 1, bool dotted = false);
@@ -68,6 +69,8 @@ public:
     void draw_glyph(const Point&, char, const Font&, Color);
     void draw_emoji(const Point&, const Gfx::Bitmap&, const Font&);
     void draw_glyph_or_emoji(const Point&, u32 codepoint, const Font&, Color);
+
+    void stroke_path(const Path&, Color, int thickness);
 
     const Font& font() const { return *state().font; }
     void set_font(const Font& font) { state().font = &font; }

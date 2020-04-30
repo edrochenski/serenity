@@ -43,10 +43,14 @@ private:
     virtual const char* class_name() const override { return "ObjectConstructor"; }
 
     static Value define_property(Interpreter&);
+    static Value is(Interpreter&);
     static Value get_own_property_descriptor(Interpreter&);
     static Value get_own_property_names(Interpreter&);
     static Value get_prototype_of(Interpreter&);
     static Value set_prototype_of(Interpreter&);
+    static Value keys(Interpreter&);
+    static Value values(Interpreter&);
+    static Value entries(Interpreter&);
 };
 
 }

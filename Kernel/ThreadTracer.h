@@ -26,11 +26,8 @@
 
 #pragma once
 
-#include <AK/CircularDeque.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/Optional.h>
-#include <AK/RefCounted.h>
-#include <Kernel/Arch/i386/CPU.h>
 #include <Kernel/UnixTypes.h>
 #include <LibC/sys/arch/i386/regs.h>
 
@@ -49,6 +46,7 @@ public:
     void set_trace_syscalls(bool val) { m_trace_syscalls = val; }
 
     void set_regs(const RegisterState& regs);
+    void set_regs(const PtraceRegisters& regs) { m_regs = regs; }
     bool has_regs() const { return m_regs.has_value(); }
     const PtraceRegisters& regs() const
     {

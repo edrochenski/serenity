@@ -26,6 +26,8 @@
 
 #include <LibJS/Heap/Heap.h>
 #include <LibJS/Interpreter.h>
+#include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/Shape.h>
 #include <LibWeb/Bindings/WindowObject.h>
 #include <LibWeb/Bindings/XMLHttpRequestConstructor.h>
 #include <LibWeb/Bindings/XMLHttpRequestWrapper.h>
@@ -35,8 +37,15 @@ namespace Web {
 namespace Bindings {
 
 XMLHttpRequestConstructor::XMLHttpRequestConstructor()
+    : NativeFunction(*interpreter().global_object().function_prototype())
 {
-    put("length", JS::Value(1));
+    put("length", JS::Value(1), JS::Attribute::Configurable);
+
+    put("UNSENT", JS::Value((i32)XMLHttpRequest::ReadyState::Unsent), JS::Attribute::Enumerable);
+    put("OPENED", JS::Value((i32)XMLHttpRequest::ReadyState::Opened), JS::Attribute::Enumerable);
+    put("HEADERS_RECEIVED", JS::Value((i32)XMLHttpRequest::ReadyState::HeadersReceived), JS::Attribute::Enumerable);
+    put("LOADING", JS::Value((i32)XMLHttpRequest::ReadyState::Loading), JS::Attribute::Enumerable);
+    put("DONE", JS::Value((i32)XMLHttpRequest::ReadyState::Done), JS::Attribute::Enumerable);
 }
 
 XMLHttpRequestConstructor::~XMLHttpRequestConstructor()

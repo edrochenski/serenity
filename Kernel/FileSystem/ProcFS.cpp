@@ -319,11 +319,10 @@ Optional<KBuffer> procfs$pid_vm(InodeIdentifier identifier)
 
         StringBuilder pagemap_builder;
         for (size_t i = 0; i < region.page_count(); ++i) {
-            auto page_index = region.first_page_index() + i;
-            auto& physical_page_slot = region.vmobject().physical_pages()[page_index];
-            if (!physical_page_slot)
+            auto* page = region.physical_page(i);
+            if (!page)
                 pagemap_builder.append('N');
-            else if (physical_page_slot == MM.shared_zero_page())
+            else if (page->is_shared_zero_page())
                 pagemap_builder.append('Z');
             else
                 pagemap_builder.append('P');
@@ -491,7 +490,7 @@ Optional<KBuffer> procfs$net_arp(InodeIdentifier)
 {
     KBufferBuilder builder;
     JsonArraySerializer array { builder };
-    LOCKER(arp_table().lock());
+    LOCKER(arp_table().lock(), Lock::Mode::Shared);
     for (auto& it : arp_table().resource()) {
         auto obj = array.add_object();
         obj.add("mac_address", it.value.to_string());
@@ -983,7 +982,7 @@ static ByteBuffer read_sys_bool(InodeIdentifier inode_id)
     auto buffer = ByteBuffer::create_uninitialized(2);
     auto* lockable_bool = reinterpret_cast<Lockable<bool>*>(variable.address);
     {
-        LOCKER(lockable_bool->lock());
+        LOCKER(lockable_bool->lock(), Lock::Mode::Shared);
         buffer[0] = lockable_bool->resource() ? '1' : '0';
     }
     buffer[1] = '\n';
@@ -1013,7 +1012,7 @@ static ByteBuffer read_sys_string(InodeIdentifier inode_id)
     ASSERT(variable.type == SysVariable::Type::String);
 
     auto* lockable_string = reinterpret_cast<Lockable<String>*>(variable.address);
-    LOCKER(lockable_string->lock());
+    LOCKER(lockable_string->lock(), Lock::Mode::Shared);
     return lockable_string->resource().to_byte_buffer();
 }
 

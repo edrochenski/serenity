@@ -60,6 +60,13 @@ public:
     i32 as_number() const { return m_number; }
     const FlyString& as_string() const { return m_string; }
 
+    String to_string() const
+    {
+        if (is_string())
+            return as_string();
+        return String::number(as_number());
+    }
+
 private:
     Type m_type { Type::Invalid };
     FlyString m_string;

@@ -49,14 +49,18 @@ public:
 
     class Visitor {
     public:
-        virtual void visit(Cell*) = 0;
+        void visit(Cell*);
         void visit(Value);
+
+    protected:
+        virtual void visit_impl(Cell*) = 0;
     };
 
     virtual void visit_children(Visitor&) {}
 
     Heap& heap() const;
     Interpreter& interpreter();
+    Interpreter& interpreter() const;
 
 protected:
     Cell() {}

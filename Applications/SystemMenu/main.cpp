@@ -28,8 +28,9 @@
 #include <AK/QuickSort.h>
 #include <LibCore/ConfigFile.h>
 #include <LibCore/DirIterator.h>
-#include <LibCore/UserInfo.h>
+#include <LibCore/StandardPaths.h>
 #include <LibGUI/Action.h>
+#include <LibGUI/ActionGroup.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Desktop.h>
 #include <LibGUI/Menu.h>
@@ -64,6 +65,7 @@ Color g_menu_selection_color;
 
 Vector<ThemeMetadata> g_themes;
 RefPtr<GUI::Menu> g_themes_menu;
+GUI::ActionGroup g_themes_group;
 
 static NonnullRefPtr<GUI::Menu> build_system_menu();
 
@@ -81,7 +83,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (chdir(get_current_user_home_path().characters()) < 0) {
+    if (chdir(Core::StandardPaths::home_directory().characters()) < 0) {
         perror("chdir");
         return 1;
     }
@@ -135,9 +137,8 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
 
         if (g_app_category_menus.contains(category))
             continue;
-        auto category_menu = GUI::Menu::construct(category);
-        system_menu->add_submenu(category_menu);
-        g_app_category_menus.set(category, move(category_menu));
+        auto& category_menu = system_menu->add_submenu(category);
+        g_app_category_menus.set(category, category_menu);
     }
 
     // Then we create and insert all the app menu items into the right place.
@@ -167,9 +168,10 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
 
     system_menu->add_separator();
 
-    g_themes_menu = GUI::Menu::construct("Themes");
+    g_themes_group.set_exclusive(true);
+    g_themes_group.set_unchecking_allowed(false);
 
-    system_menu->add_submenu(*g_themes_menu);
+    g_themes_menu = &system_menu->add_submenu("Themes");
 
     {
         Core::DirIterator dt("/res/themes", Core::DirIterator::SkipDots);
@@ -181,15 +183,21 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
         quick_sort(g_themes, [](auto& a, auto& b) { return a.name < b.name; });
     }
 
+    auto current_theme_name = GUI::WindowServerConnection::the().send_sync<Messages::WindowServer::GetSystemTheme>()->theme_name();
+
     {
         int theme_identifier = 0;
         for (auto& theme : g_themes) {
-            g_themes_menu->add_action(GUI::Action::create(theme.name, [theme_identifier](auto&) {
+            auto action = GUI::Action::create_checkable(theme.name, [theme_identifier](auto&) {
                 auto& theme = g_themes[theme_identifier];
                 dbg() << "Theme switched to " << theme.name << " at path " << theme.path;
                 auto response = GUI::WindowServerConnection::the().send_sync<Messages::WindowServer::SetSystemTheme>(theme.path, theme.name);
                 ASSERT(response->success());
-            }));
+            });
+            if (theme.name == current_theme_name)
+                action->set_checked(true);
+            g_themes_group.add_action(action);
+            g_themes_menu->add_action(action);
             ++theme_identifier;
         }
     }

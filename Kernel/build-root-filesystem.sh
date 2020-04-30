@@ -92,6 +92,7 @@ echo "done"
 printf "installing users... "
 mkdir -p mnt/root
 mkdir -p mnt/home/anon
+mkdir -p mnt/home/anon/Desktop
 mkdir -p mnt/home/nona
 cp ../ReadMe.md mnt/home/anon/
 cp -r ../Libraries/LibJS/Tests mnt/home/anon/js-tests
@@ -135,17 +136,19 @@ cp ../Applications/PaintBrush/PaintBrush mnt/bin/PaintBrush
 cp ../Applications/QuickShow/QuickShow mnt/bin/QuickShow
 cp ../Applications/Piano/Piano mnt/bin/Piano
 cp ../Applications/SystemMenu/SystemMenu mnt/bin/SystemMenu
-cp ../Applications/ChanViewer/ChanViewer mnt/bin/ChanViewer
 cp ../Applications/Calculator/Calculator mnt/bin/Calculator
 cp ../Applications/Calendar/Calendar mnt/bin/Calendar
 cp ../Applications/SoundPlayer/SoundPlayer mnt/bin/SoundPlayer
-cp ../Applications/DisplayProperties/DisplayProperties mnt/bin/DisplayProperties
+cp ../Applications/DisplaySettings/DisplaySettings mnt/bin/DisplaySettings
 cp ../Applications/Welcome/Welcome mnt/bin/Welcome
 cp ../Applications/Help/Help mnt/bin/Help
 cp ../Applications/Browser/Browser mnt/bin/Browser
+cp ../Applications/Debugger/Debugger mnt/bin/sdb
 cp ../Games/Solitaire/Solitaire mnt/bin/Solitaire
 cp ../Demos/HelloWorld/HelloWorld mnt/bin/HelloWorld
 cp ../Demos/WidgetGallery/WidgetGallery mnt/bin/WidgetGallery
+cp ../Demos/Cube/Cube mnt/bin/Cube
+cp ../Demos/Screensaver/Screensaver mnt/bin/Screensaver
 cp ../Demos/Fire/Fire mnt/bin/Fire
 cp ../Demos/DynamicLink/LinkDemo/LinkDemo mnt/bin/LinkDemo
 cp ../DevTools/HackStudio/HackStudio mnt/bin/HackStudio
@@ -191,7 +194,6 @@ ln -s PaintBrush mnt/bin/pb
 ln -s QuickShow mnt/bin/qs
 ln -s Piano mnt/bin/pi
 ln -s SystemDialog mnt/bin/sd
-ln -s ChanViewer mnt/bin/cv
 ln -s Calculator mnt/bin/calc
 ln -s Calendar mnt/bin/calendar
 ln -s Inspector mnt/bin/ins

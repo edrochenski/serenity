@@ -25,9 +25,9 @@
  */
 
 #include <LibCore/Timer.h>
+#include <LibGUI/ColorInput.h>
 #include <LibGUI/ColorPicker.h>
 #include <LibGUI/Painter.h>
-#include <LibGUI/ColorInput.h>
 #include <LibGfx/Palette.h>
 
 namespace GUI {
@@ -35,11 +35,10 @@ namespace GUI {
 ColorInput::ColorInput()
     : TextEditor(TextEditor::SingleLine)
 {
-    set_readonly(true);
-
-    m_auto_repeat_timer = add<Core::Timer>();
-    m_auto_repeat_timer->on_timeout = [this] {
-        click();
+    TextEditor::on_change = [this] {
+        auto parsed_color = Color::from_string(text());
+        if (parsed_color.has_value())
+            set_color_without_changing_text(parsed_color.value());
     };
 }
 
@@ -47,83 +46,78 @@ ColorInput::~ColorInput()
 {
 }
 
-void ColorInput::set_color(Color color)
+Gfx::Rect ColorInput::color_rect() const
 {
+    auto color_box_padding = 3;
+    auto color_box_size = height() - color_box_padding - color_box_padding;
+    return { width() - color_box_size - color_box_padding, color_box_padding, color_box_size, color_box_size };
+}
+
+void ColorInput::set_color_without_changing_text(Color color)
+{
+    if (m_color == color)
+        return;
     m_color = color;
-    set_text(color.to_string());
-
     update();
-
     if (on_change)
         on_change();
+}
+
+void ColorInput::set_color(Color color)
+{
+    if (m_color == color)
+        return;
+    set_text(m_color_has_alpha_channel ? color.to_string() : color.to_string_without_alpha());
 };
 
 void ColorInput::mousedown_event(MouseEvent& event)
 {
-    if (event.button() == MouseButton::Left) {
-        if (is_enabled()) {
-            m_being_pressed = true;
-            update();
-
-            if (m_auto_repeat_interval) {
-                click();
-                m_auto_repeat_timer->start(m_auto_repeat_interval);
-            }
-        }
+    if (event.button() == MouseButton::Left && color_rect().contains(event.position())) {
+        m_may_be_color_rect_click = true;
+        return;
     }
 
-    Widget::mousedown_event(event);
+    TextEditor::mousedown_event(event);
 }
 
 void ColorInput::mouseup_event(MouseEvent& event)
 {
     if (event.button() == MouseButton::Left) {
-        bool was_auto_repeating = m_auto_repeat_timer->is_active();
-        m_auto_repeat_timer->stop();
-        if (is_enabled()) {
-            bool was_being_pressed = m_being_pressed;
-            m_being_pressed = false;
-            update();
-            if (was_being_pressed && !was_auto_repeating)
-                click();
+        bool is_color_rect_click = m_may_be_color_rect_click && color_rect().contains(event.position());
+        m_may_be_color_rect_click = false;
+        if (is_color_rect_click) {
+            auto dialog = GUI::ColorPicker::construct(m_color, window(), m_color_picker_title);
+            dialog->set_color_has_alpha_channel(m_color_has_alpha_channel);
+            if (dialog->exec() == GUI::Dialog::ExecOK)
+                set_color(dialog->color());
+            event.accept();
+            return;
         }
     }
-    Widget::mouseup_event(event);
+    TextEditor::mouseup_event(event);
 }
 
-void ColorInput::enter_event(Core::Event&)
+void ColorInput::mousemove_event(MouseEvent& event)
 {
-    ASSERT(window());
-    window()->set_override_cursor(StandardCursor::Arrow);
+    if (color_rect().contains(event.position())) {
+        window()->set_override_cursor(StandardCursor::Hand);
+        event.accept();
+        return;
+    } else {
+        window()->set_override_cursor(StandardCursor::IBeam);
+    }
+
+    TextEditor::mousemove_event(event);
 }
 
 void ColorInput::paint_event(PaintEvent& event)
 {
-    // Set cursor color to base color and stop timer. FIXME: Find better way to hide cursor.
-    auto pal = palette();
-    pal.set_color(ColorRole::TextCursor, palette().base());
-    set_palette(pal);
-    stop_timer();
-
     TextEditor::paint_event(event);
 
-    auto color_box_padding = 3;
-    auto color_box_size = event.rect().height() - color_box_padding - color_box_padding;
-
     Painter painter(*this);
-    painter.fill_rect({ event.rect().width() - color_box_size - color_box_padding , color_box_padding, color_box_size, color_box_size}, m_color);
+    painter.add_clip_rect(event.rect());
+
+    painter.fill_rect(color_rect(), m_color);
+    painter.draw_rect(color_rect(), Color::Black);
 }
-
-void ColorInput::click()
-{
-    if (!is_enabled())
-        return;
-
-    auto dialog = GUI::ColorPicker::construct(m_color, window(), m_color_picker_title);
-    if (dialog->exec() == GUI::Dialog::ExecOK) {
-        auto tmp = dialog->color();
-        set_color(tmp);
-    }
-}
-
 }

@@ -27,34 +27,38 @@
 #include <AK/FlyString.h>
 #include <AK/Function.h>
 #include <LibJS/Interpreter.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/MathObject.h>
 #include <math.h>
 
 namespace JS {
 
 MathObject::MathObject()
+    : Object(interpreter().global_object().object_prototype())
 {
-    put_native_function("abs", abs, 1);
-    put_native_function("random", random);
-    put_native_function("sqrt", sqrt, 1);
-    put_native_function("floor", floor, 1);
-    put_native_function("ceil", ceil, 1);
-    put_native_function("round", round, 1);
-    put_native_function("max", max, 2);
-    put_native_function("min", min, 2);
-    put_native_function("trunc", trunc, 1);
-    put_native_function("sin", sin, 1);
-    put_native_function("cos", cos, 1);
-    put_native_function("tan", tan, 1);
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+    put_native_function("abs", abs, 1, attr);
+    put_native_function("random", random, 0, attr);
+    put_native_function("sqrt", sqrt, 1, attr);
+    put_native_function("floor", floor, 1, attr);
+    put_native_function("ceil", ceil, 1, attr);
+    put_native_function("round", round, 1, attr);
+    put_native_function("max", max, 2, attr);
+    put_native_function("min", min, 2, attr);
+    put_native_function("trunc", trunc, 1, attr);
+    put_native_function("sin", sin, 1, attr);
+    put_native_function("cos", cos, 1, attr);
+    put_native_function("tan", tan, 1, attr);
+    put_native_function("pow", pow, 2, attr);
 
-    put("E", Value(M_E));
-    put("LN2", Value(M_LN2));
-    put("LN10", Value(M_LN10));
-    put("LOG2E", Value(log2(M_E)));
-    put("LOG10E", Value(log10(M_E)));
-    put("PI", Value(M_PI));
-    put("SQRT1_2", Value(::sqrt(1.0 / 2.0)));
-    put("SQRT2", Value(::sqrt(2)));
+    put("E", Value(M_E), 0);
+    put("LN2", Value(M_LN2), 0);
+    put("LN10", Value(M_LN10), 0);
+    put("LOG2E", Value(log2(M_E)), 0);
+    put("LOG10E", Value(log10(M_E)), 0);
+    put("PI", Value(M_PI), 0);
+    put("SQRT1_2", Value(::sqrt(1.0 / 2.0)), 0);
+    put("SQRT2", Value(::sqrt(2)), 0);
 }
 
 MathObject::~MathObject()
@@ -108,8 +112,7 @@ Value MathObject::round(Interpreter& interpreter)
     auto number = interpreter.argument(0).to_number();
     if (number.is_nan())
         return js_nan();
-    // FIXME: Use ::round() instead of ::roundf().
-    return Value(::roundf(number.as_double()));
+    return Value(::round(number.as_double()));
 }
 
 Value MathObject::max(Interpreter& interpreter)
@@ -177,6 +180,11 @@ Value MathObject::tan(Interpreter& interpreter)
     if (number.is_nan())
         return js_nan();
     return Value(::tan(number.as_double()));
+}
+
+Value MathObject::pow(Interpreter& interpreter)
+{
+    return exp(interpreter, interpreter.argument(0), interpreter.argument(1));
 }
 
 }

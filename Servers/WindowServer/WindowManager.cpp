@@ -169,6 +169,8 @@ Gfx::Size WindowManager::resolution() const
 
 void WindowManager::add_window(Window& window)
 {
+    bool is_first_window = m_windows_in_order.is_empty();
+
     m_windows_in_order.append(&window);
 
     if (window.is_fullscreen()) {
@@ -176,7 +178,9 @@ void WindowManager::add_window(Window& window)
         window.set_rect(Screen::the().rect());
     }
 
-    set_active_window(&window);
+    if (window.type() != WindowType::Desktop || is_first_window)
+        set_active_window(&window);
+
     if (m_switcher.is_visible() && window.type() != WindowType::WindowSwitcher)
         m_switcher.refresh();
 
@@ -843,8 +847,12 @@ void WindowManager::process_mouse_event(MouseEvent& event, Window*& hovered_wind
 
             // Well okay, let's see if we're hitting the frame or the window inside the frame.
             if (window.rect().contains(event.position())) {
-                if (window.type() == WindowType::Normal && event.type() == Event::MouseDown)
-                    move_to_front_and_make_active(window);
+                if (event.type() == Event::MouseDown) {
+                    if (window.type() == WindowType::Normal)
+                        move_to_front_and_make_active(window);
+                    else if (window.type() == WindowType::Desktop)
+                        set_active_window(&window);
+                }
 
                 hovered_window = &window;
                 if (!window.global_cursor_tracking() && !windows_who_received_mouse_event_due_to_cursor_tracking.contains(&window)) {
@@ -934,6 +942,18 @@ Gfx::Rect WindowManager::menubar_rect() const
     if (active_fullscreen_window())
         return {};
     return MenuManager::the().menubar_rect();
+}
+
+Gfx::Rect WindowManager::desktop_rect() const
+{
+    if (active_fullscreen_window())
+        return {};
+    return {
+        0,
+        menubar_rect().bottom() + 1,
+        Screen::the().width(),
+        Screen::the().height() - menubar_rect().height() - 28
+    };
 }
 
 void WindowManager::event(Core::Event& event)
@@ -1040,12 +1060,17 @@ void WindowManager::set_highlight_window(Window* window)
         invalidate(*m_highlight_window);
 }
 
+static bool window_type_can_become_active(WindowType type)
+{
+    return type == WindowType::Normal || type == WindowType::Desktop;
+}
+
 void WindowManager::set_active_window(Window* window)
 {
     if (window && window->is_blocked_by_modal_window())
         return;
 
-    if (window && window->type() != WindowType::Normal)
+    if (window && !window_type_can_become_active(window->type()))
         return;
 
     if (window == m_active_window)
@@ -1061,6 +1086,7 @@ void WindowManager::set_active_window(Window* window)
         Core::EventLoop::current().post_event(*previously_active_window, make<Event>(Event::WindowDeactivated));
         invalidate(*previously_active_window);
         m_active_window = nullptr;
+        m_active_input_window = nullptr;
         tell_wm_listeners_window_state_changed(*previously_active_window);
     }
 
@@ -1258,6 +1284,7 @@ bool WindowManager::update_theme(String theme_path, String theme_name)
     ASSERT(new_theme);
     Gfx::set_system_theme(*new_theme);
     m_palette = Gfx::PaletteImpl::create_with_shared_buffer(*new_theme);
+    Compositor::the().set_background_color(palette().desktop_background().to_string());
     HashTable<ClientConnection*> notified_clients;
     for_each_window([&](Window& window) {
         if (window.client()) {

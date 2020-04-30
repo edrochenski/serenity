@@ -30,6 +30,7 @@
 #include <LibJS/Heap/Heap.h>
 #include <LibJS/Heap/HeapBlock.h>
 #include <LibJS/Interpreter.h>
+#include <LibJS/Runtime/MarkedValueList.h>
 #include <LibJS/Runtime/Object.h>
 #include <setjmp.h>
 #include <stdio.h>
@@ -84,6 +85,10 @@ Cell* Heap::allocate_cell(size_t size)
 void Heap::collect_garbage(CollectionType collection_type)
 {
     if (collection_type == CollectionType::CollectGarbage) {
+        if (m_gc_deferrals) {
+            m_should_gc_when_deferral_ends = true;
+            return;
+        }
         HashTable<Cell*> roots;
         gather_roots(roots);
         mark_live_cells(roots);
@@ -99,6 +104,13 @@ void Heap::gather_roots(HashTable<Cell*>& roots)
 
     for (auto* handle : m_handles)
         roots.set(handle->cell());
+
+    for (auto* list : m_marked_value_lists) {
+        for (auto& value : list->values()) {
+            if (value.is_cell())
+                roots.set(value.as_cell());
+        }
+    }
 
 #ifdef HEAP_DEBUG
     dbg() << "gather_roots:";
@@ -188,7 +200,7 @@ class MarkingVisitor final : public Cell::Visitor {
 public:
     MarkingVisitor() {}
 
-    virtual void visit(Cell* cell)
+    virtual void visit_impl(Cell* cell)
     {
         if (cell->is_marked())
             return;
@@ -206,11 +218,8 @@ void Heap::mark_live_cells(const HashTable<Cell*>& roots)
     dbg() << "mark_live_cells:";
 #endif
     MarkingVisitor visitor;
-    for (auto* root : roots) {
-        if (!root)
-            continue;
+    for (auto* root : roots)
         visitor.visit(root);
-    }
 }
 
 void Heap::sweep_dead_cells()
@@ -263,6 +272,35 @@ void Heap::did_destroy_handle(Badge<HandleImpl>, HandleImpl& impl)
 {
     ASSERT(m_handles.contains(&impl));
     m_handles.remove(&impl);
+}
+
+void Heap::did_create_marked_value_list(Badge<MarkedValueList>, MarkedValueList& list)
+{
+    ASSERT(!m_marked_value_lists.contains(&list));
+    m_marked_value_lists.set(&list);
+}
+
+void Heap::did_destroy_marked_value_list(Badge<MarkedValueList>, MarkedValueList& list)
+{
+    ASSERT(m_marked_value_lists.contains(&list));
+    m_marked_value_lists.remove(&list);
+}
+
+void Heap::defer_gc(Badge<DeferGC>)
+{
+    ++m_gc_deferrals;
+}
+
+void Heap::undefer_gc(Badge<DeferGC>)
+{
+    ASSERT(m_gc_deferrals > 0);
+    --m_gc_deferrals;
+
+    if (!m_gc_deferrals) {
+        if (m_should_gc_when_deferral_ends)
+            collect_garbage();
+        m_should_gc_when_deferral_ends = false;
+    }
 }
 
 }

@@ -37,6 +37,7 @@ public:
     FlyString(const StringView&);
     FlyString(const char*);
 
+    bool is_empty() const { return !m_impl || !m_impl->length(); }
     bool is_null() const { return !m_impl; }
 
     bool operator==(const FlyString& other) const { return m_impl == other.m_impl; }
@@ -55,7 +56,7 @@ public:
     const char* characters() const { return m_impl ? m_impl->characters() : nullptr; }
     size_t length() const { return m_impl ? m_impl->length() : 0; }
 
-    u32 hash() const { return m_impl ? m_impl->hash() : 0; }
+    ALWAYS_INLINE u32 hash() const { return m_impl ? m_impl->existing_hash() : 0; }
 
     StringView view() const;
 
@@ -73,7 +74,7 @@ private:
 
 template<>
 struct Traits<FlyString> : public GenericTraits<FlyString> {
-    static unsigned hash(const FlyString& s) { return s.impl() ? s.impl()->hash() : 0; }
+    static unsigned hash(const FlyString& s) { return s.hash(); }
 };
 
 }

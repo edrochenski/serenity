@@ -31,7 +31,7 @@
 namespace Web {
 namespace Bindings {
 
-class CanvasRenderingContext2DWrapper : public Wrapper {
+class CanvasRenderingContext2DWrapper final : public Wrapper {
 public:
     explicit CanvasRenderingContext2DWrapper(CanvasRenderingContext2D&);
     virtual ~CanvasRenderingContext2DWrapper() override;
@@ -44,12 +44,23 @@ private:
 
     static JS::Value fill_rect(JS::Interpreter&);
     static JS::Value stroke_rect(JS::Interpreter&);
+    static JS::Value draw_image(JS::Interpreter&);
     static JS::Value scale(JS::Interpreter&);
     static JS::Value translate(JS::Interpreter&);
     static JS::Value fill_style_getter(JS::Interpreter&);
     static void fill_style_setter(JS::Interpreter&, JS::Value);
     static JS::Value stroke_style_getter(JS::Interpreter&);
     static void stroke_style_setter(JS::Interpreter&, JS::Value);
+    static JS::Value line_width_getter(JS::Interpreter&);
+    static void line_width_setter(JS::Interpreter&, JS::Value);
+    static JS::Value begin_path(JS::Interpreter&);
+    static JS::Value close_path(JS::Interpreter&);
+    static JS::Value stroke(JS::Interpreter&);
+    static JS::Value move_to(JS::Interpreter&);
+    static JS::Value line_to(JS::Interpreter&);
+
+    static JS::Value create_image_data(JS::Interpreter&);
+    static JS::Value put_image_data(JS::Interpreter&);
 
     NonnullRefPtr<CanvasRenderingContext2D> m_impl;
 };

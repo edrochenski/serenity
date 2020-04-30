@@ -29,20 +29,27 @@
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/ObjectConstructor.h>
 #include <LibJS/Runtime/Shape.h>
 
 namespace JS {
 
 ObjectConstructor::ObjectConstructor()
+    : NativeFunction("Object", *interpreter().global_object().function_prototype())
 {
-    put("prototype", interpreter().object_prototype());
+    put("prototype", interpreter().global_object().object_prototype(), 0);
 
-    put_native_function("defineProperty", define_property, 3);
-    put_native_function("getOwnPropertyDescriptor", get_own_property_descriptor, 2);
-    put_native_function("getOwnPropertyNames", get_own_property_names, 1);
-    put_native_function("getPrototypeOf", get_prototype_of, 1);
-    put_native_function("setPrototypeOf", set_prototype_of, 2);
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+    put_native_function("defineProperty", define_property, 3, attr);
+    put_native_function("is", is, 2, attr);
+    put_native_function("getOwnPropertyDescriptor", get_own_property_descriptor, 2, attr);
+    put_native_function("getOwnPropertyNames", get_own_property_names, 1, attr);
+    put_native_function("getPrototypeOf", get_prototype_of, 1, attr);
+    put_native_function("setPrototypeOf", set_prototype_of, 2, attr);
+    put_native_function("keys", keys, 1, attr);
+    put_native_function("values", values, 1, attr);
+    put_native_function("entries", entries, 1, attr);
 }
 
 ObjectConstructor::~ObjectConstructor()
@@ -51,7 +58,7 @@ ObjectConstructor::~ObjectConstructor()
 
 Value ObjectConstructor::call(Interpreter& interpreter)
 {
-    return interpreter.heap().allocate<Object>();
+    return Object::create_empty(interpreter, interpreter.global_object());
 }
 
 Value ObjectConstructor::construct(Interpreter& interpreter)
@@ -66,14 +73,15 @@ Value ObjectConstructor::get_own_property_names(Interpreter& interpreter)
     auto* object = interpreter.argument(0).to_object(interpreter.heap());
     if (interpreter.exception())
         return {};
-    auto* result = interpreter.heap().allocate<Array>();
+    auto* result = Array::create(interpreter.global_object());
     for (size_t i = 0; i < object->elements().size(); ++i) {
         if (!object->elements()[i].is_empty())
-            result->push(js_string(interpreter, String::number(i)));
+            result->elements().append(js_string(interpreter, String::number(i)));
     }
 
-    for (auto& it : object->shape().property_table())
-        result->push(js_string(interpreter, it.key));
+    for (auto& it : object->shape().property_table_ordered()) {
+        result->elements().append(js_string(interpreter, it.key));
+    }
     return result;
 }
 
@@ -108,11 +116,16 @@ Value ObjectConstructor::get_own_property_descriptor(Interpreter& interpreter)
     auto metadata = object.shape().lookup(interpreter.argument(1).to_string());
     if (!metadata.has_value())
         return js_undefined();
-    auto* descriptor = interpreter.heap().allocate<Object>();
+
+    auto value = object.get(interpreter.argument(1).to_string()).value_or(js_undefined());
+    if (interpreter.exception())
+        return {};
+
+    auto* descriptor = Object::create_empty(interpreter, interpreter.global_object());
     descriptor->put("configurable", Value(!!(metadata.value().attributes & Attribute::Configurable)));
     descriptor->put("enumerable", Value(!!(metadata.value().attributes & Attribute::Enumerable)));
     descriptor->put("writable", Value(!!(metadata.value().attributes & Attribute::Writable)));
-    descriptor->put("value", object.get(interpreter.argument(1).to_string()).value_or(js_undefined()));
+    descriptor->put("value", value);
     return descriptor;
 }
 
@@ -127,7 +140,7 @@ Value ObjectConstructor::define_property(Interpreter& interpreter)
     auto& object = interpreter.argument(0).as_object();
     auto& descriptor = interpreter.argument(2).as_object();
 
-    Value value = descriptor.get("value").value_or(Value());
+    auto value = descriptor.get("value");
     u8 configurable = descriptor.get("configurable").value_or(Value(false)).to_boolean() * Attribute::Configurable;
     u8 enumerable = descriptor.get("enumerable").value_or(Value(false)).to_boolean() * Attribute::Enumerable;
     u8 writable = descriptor.get("writable").value_or(Value(false)).to_boolean() * Attribute::Writable;
@@ -137,6 +150,58 @@ Value ObjectConstructor::define_property(Interpreter& interpreter)
 
     object.put_own_property(object, interpreter.argument(1).to_string(), attributes, value, PutOwnPropertyMode::DefineProperty);
     return &object;
+}
+
+Value ObjectConstructor::is(Interpreter& interpreter)
+{
+    auto value1 = interpreter.argument(0);
+    auto value2 = interpreter.argument(1);
+    if (value1.is_nan() && value2.is_nan())
+        return Value(true);
+    if (value1.is_number() && value1.as_double() == 0 && value2.is_number() && value2.as_double() == 0) {
+        if (value1.is_positive_zero() && value2.is_positive_zero())
+            return Value(true);
+        if (value1.is_negative_zero() && value2.is_negative_zero())
+            return Value(true);
+        return Value(false);
+    }
+    return typed_eq(interpreter, value1, value2);
+}
+
+Value ObjectConstructor::keys(Interpreter& interpreter)
+{
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<TypeError>("Can't convert undefined to object");
+
+    auto* obj_arg = interpreter.argument(0).to_object(interpreter.heap());
+    if (interpreter.exception())
+        return {};
+
+    return obj_arg->get_enumerable_own_properties(*obj_arg, GetOwnPropertyMode::Key);
+}
+
+Value ObjectConstructor::values(Interpreter& interpreter)
+{
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<TypeError>("Can't convert undefined to object");
+
+    auto* obj_arg = interpreter.argument(0).to_object(interpreter.heap());
+    if (interpreter.exception())
+        return {};
+
+    return obj_arg->get_enumerable_own_properties(*obj_arg, GetOwnPropertyMode::Value);
+}
+
+Value ObjectConstructor::entries(Interpreter& interpreter)
+{
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<TypeError>("Can't convert undefined to object");
+
+    auto* obj_arg = interpreter.argument(0).to_object(interpreter.heap());
+    if (interpreter.exception())
+        return {};
+
+    return obj_arg->get_enumerable_own_properties(*obj_arg, GetOwnPropertyMode::KeyAndValue);
 }
 
 }

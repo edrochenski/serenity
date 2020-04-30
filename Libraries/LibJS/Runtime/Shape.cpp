@@ -29,6 +29,17 @@
 
 namespace JS {
 
+Shape* Shape::create_unique_clone() const
+{
+    auto* new_shape = heap().allocate<Shape>();
+    new_shape->m_unique = true;
+    new_shape->m_prototype = m_prototype;
+    ensure_property_table();
+    new_shape->ensure_property_table();
+    (*new_shape->m_property_table) = *m_property_table;
+    return new_shape;
+}
+
 Shape* Shape::create_put_transition(const FlyString& property_name, u8 attributes)
 {
     TransitionKey key { property_name, attributes };
@@ -81,17 +92,18 @@ Shape::~Shape()
 void Shape::visit_children(Cell::Visitor& visitor)
 {
     Cell::visit_children(visitor);
-    if (m_prototype)
-        visitor.visit(m_prototype);
-    if (m_previous)
-        visitor.visit(m_previous);
+    visitor.visit(m_prototype);
+    visitor.visit(m_previous);
     for (auto& it : m_forward_transitions)
         visitor.visit(it.value);
 }
 
 Optional<PropertyMetadata> Shape::lookup(const FlyString& property_name) const
 {
-    return property_table().get(property_name);
+    auto property = property_table().get(property_name);
+    if (!property.has_value())
+        return {};
+    return property;
 }
 
 const HashMap<FlyString, PropertyMetadata>& Shape::property_table() const
@@ -103,6 +115,18 @@ const HashMap<FlyString, PropertyMetadata>& Shape::property_table() const
 size_t Shape::property_count() const
 {
     return property_table().size();
+}
+
+Vector<Shape::Property> Shape::property_table_ordered() const
+{
+    auto vec = Vector<Shape::Property>();
+    vec.resize(property_table().size());
+
+    for (auto& it : property_table()) {
+        vec[it.value.offset] = { it.key, it.value };
+    }
+
+    return vec;
 }
 
 void Shape::ensure_property_table() const
@@ -133,6 +157,34 @@ void Shape::ensure_property_table() const
             ASSERT(it != m_property_table->end());
             it->value.attributes = shape->m_attributes;
         }
+    }
+}
+
+void Shape::add_property_to_unique_shape(const FlyString& property_name, u8 attributes)
+{
+    ASSERT(is_unique());
+    ASSERT(m_property_table);
+    ASSERT(!m_property_table->contains(property_name));
+    m_property_table->set(property_name, { m_property_table->size(), attributes });
+}
+
+void Shape::reconfigure_property_in_unique_shape(const FlyString& property_name, u8 attributes)
+{
+    ASSERT(is_unique());
+    ASSERT(m_property_table);
+    ASSERT(m_property_table->contains(property_name));
+    m_property_table->set(property_name, { m_property_table->size(), attributes });
+}
+
+void Shape::remove_property_from_unique_shape(const FlyString& property_name, size_t offset)
+{
+    ASSERT(is_unique());
+    ASSERT(m_property_table);
+    m_property_table->remove(property_name);
+    for (auto& it : *m_property_table) {
+        ASSERT(it.value.offset != offset);
+        if (it.value.offset > offset)
+            --it.value.offset;
     }
 }
 

@@ -38,9 +38,10 @@
 #include <LibGUI/Splitter.h>
 #include <LibGUI/TextEditor.h>
 #include <LibGUI/ToolBar.h>
+#include <LibGUI/ToolBarContainer.h>
 #include <LibGUI/TreeView.h>
 #include <LibGUI/Window.h>
-#include <LibMarkdown/MDDocument.h>
+#include <LibMarkdown/Document.h>
 #include <LibWeb/HtmlView.h>
 #include <LibWeb/Layout/LayoutNode.h>
 #include <LibWeb/Parser/CSSParser.h>
@@ -81,9 +82,11 @@ int main(int argc, char* argv[])
 
     auto& widget = window->set_main_widget<GUI::Widget>();
     widget.set_layout<GUI::VerticalBoxLayout>();
-    widget.layout()->set_spacing(0);
+    widget.set_fill_with_background_color(true);
+    widget.layout()->set_spacing(2);
 
-    auto& toolbar = widget.add<GUI::ToolBar>();
+    auto& toolbar_container = widget.add<GUI::ToolBarContainer>();
+    auto& toolbar = toolbar_container.add<GUI::ToolBar>();
 
     auto& splitter = widget.add<GUI::HorizontalSplitter>();
 
@@ -125,7 +128,7 @@ int main(int argc, char* argv[])
         auto buffer = file->read_all();
         StringView source { (const char*)buffer.data(), buffer.size() };
 
-        MDDocument md_document;
+        Markdown::Document md_document;
         bool success = md_document.parse(source);
         ASSERT(success);
 
@@ -148,7 +151,7 @@ int main(int argc, char* argv[])
         open_page(path);
     };
 
-    html_view.on_link_click = [&](const String& href) {
+    html_view.on_link_click = [&](const String& href, auto&, unsigned) {
         char* current_path = strdup(history.current().characters());
         char* dir_path = dirname(current_path);
         char* path = realpath(String::format("%s/%s", dir_path, href.characters()).characters(), nullptr);
@@ -177,7 +180,7 @@ int main(int argc, char* argv[])
     toolbar.add_action(*go_back_action);
     toolbar.add_action(*go_forward_action);
 
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
 
     auto& app_menu = menubar->add_menu("Help");
     app_menu.add_action(GUI::Action::create("About", [&](const GUI::Action&) {

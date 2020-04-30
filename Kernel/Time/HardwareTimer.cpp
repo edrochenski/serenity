@@ -31,23 +31,27 @@ namespace Kernel {
 
 HardwareTimer::HardwareTimer(u8 irq_number, Function<void(const RegisterState&)> callback)
     : IRQHandler(irq_number)
-    , m_function_to_call(move(callback))
+    , m_callback(move(callback))
 {
 }
+
 void HardwareTimer::handle_irq(const RegisterState& regs)
 {
-    m_function_to_call(regs);
+    if (m_callback)
+        m_callback(regs);
 }
+
 const char* HardwareTimer::purpose() const
 {
     if (TimeManagement::the().is_system_timer(*this))
         return "System Timer";
     return model();
 }
-void HardwareTimer::change_function(Function<void(const RegisterState&)> callback)
+
+void HardwareTimer::set_callback(Function<void(const RegisterState&)> callback)
 {
     disable_irq();
-    m_function_to_call = move(callback);
+    m_callback = move(callback);
     enable_irq();
 }
 

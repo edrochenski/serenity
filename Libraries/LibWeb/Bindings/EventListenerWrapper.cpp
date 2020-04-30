@@ -24,7 +24,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Function.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibWeb/Bindings/EventListenerWrapper.h>
 #include <LibWeb/DOM/EventListener.h>
 
@@ -32,7 +34,8 @@ namespace Web {
 namespace Bindings {
 
 EventListenerWrapper::EventListenerWrapper(EventListener& impl)
-    : m_impl(impl)
+    : Wrapper(*interpreter().global_object().object_prototype())
+    , m_impl(impl)
 {
 }
 

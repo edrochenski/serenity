@@ -31,9 +31,23 @@
 #include <LibCore/DateTime.h>
 #include <LibCore/Notifier.h>
 #include <LibGUI/Model.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 
+#define ENUMERATE_FILETYPES                    \
+    __ENUMERATE_FILETYPE(cplusplus, ".cpp")    \
+    __ENUMERATE_FILETYPE(header, ".h")         \
+    __ENUMERATE_FILETYPE(html, ".html")        \
+    __ENUMERATE_FILETYPE(image, ".png")        \
+    __ENUMERATE_FILETYPE(java, ".java")        \
+    __ENUMERATE_FILETYPE(javascript, ".js")    \
+    __ENUMERATE_FILETYPE(library, ".so", ".a") \
+    __ENUMERATE_FILETYPE(object, ".o", ".obj") \
+    __ENUMERATE_FILETYPE(pdf, ".pdf")          \
+    __ENUMERATE_FILETYPE(python, ".py")        \
+    __ENUMERATE_FILETYPE(sound, ".wav")        \
+    __ENUMERATE_FILETYPE(text, ".txt", ".md")
 namespace GUI {
 
 class FileSystemModel
@@ -79,6 +93,10 @@ public:
         bool is_directory() const { return S_ISDIR(mode); }
         bool is_executable() const { return mode & (S_IXUSR | S_IXGRP | S_IXOTH); }
 
+        bool has_error() const { return m_error != 0; }
+        int error() const { return m_error; }
+        const char* error_string() const { return strerror(m_error); }
+
         String full_path(const FileSystemModel&) const;
 
     private:
@@ -90,6 +108,8 @@ public:
 
         int m_watch_fd { -1 };
         RefPtr<Core::Notifier> m_notifier;
+
+        int m_error { 0 };
 
         ModelIndex index(const FileSystemModel&, int column) const;
         void traverse_if_needed(const FileSystemModel&);
@@ -112,7 +132,8 @@ public:
     GUI::Icon icon_for_file(const mode_t mode, const String& name) const;
 
     Function<void(int done, int total)> on_thumbnail_progress;
-    Function<void()> on_root_path_change;
+    Function<void()> on_complete;
+    Function<void(int error, const char* error_string)> on_error;
 
     virtual int tree_column() const override { return Column::Name; }
     virtual int row_count(const ModelIndex& = ModelIndex()) const override;
@@ -152,16 +173,11 @@ private:
     GUI::Icon m_symlink_icon;
     GUI::Icon m_socket_icon;
     GUI::Icon m_executable_icon;
-    GUI::Icon m_filetype_image_icon;
-    GUI::Icon m_filetype_sound_icon;
-    GUI::Icon m_filetype_html_icon;
-    GUI::Icon m_filetype_cplusplus_icon;
-    GUI::Icon m_filetype_java_icon;
-    GUI::Icon m_filetype_javascript_icon;
-    GUI::Icon m_filetype_text_icon;
-    GUI::Icon m_filetype_pdf_icon;
-    GUI::Icon m_filetype_library_icon;
-    GUI::Icon m_filetype_object_icon;
+
+#define __ENUMERATE_FILETYPE(filetype_name, ...) \
+    GUI::Icon m_filetype_##filetype_name##_icon;
+    ENUMERATE_FILETYPES
+#undef __ENUMERATE_FILETYPE
 
     unsigned m_thumbnail_progress { 0 };
     unsigned m_thumbnail_progress_total { 0 };

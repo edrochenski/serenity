@@ -33,10 +33,15 @@ namespace JS {
 class GlobalObject : public Object {
 public:
     explicit GlobalObject();
+    virtual void initialize();
+
     virtual ~GlobalObject() override;
 
-#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \
-    ConstructorName* snake_name##_constructor() { return m_##snake_name##_constructor; }
+    Shape* empty_object_shape() { return m_empty_object_shape; }
+
+#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName)            \
+    ConstructorName* snake_name##_constructor() { return m_##snake_name##_constructor; } \
+    Object* snake_name##_prototype() { return m_##snake_name##_prototype; }
     JS_ENUMERATE_BUILTIN_TYPES
 #undef __JS_ENUMERATE
 
@@ -48,12 +53,16 @@ private:
 
     static Value gc(Interpreter&);
     static Value is_nan(Interpreter&);
+    static Value is_finite(Interpreter&);
 
     template<typename ConstructorType>
     void add_constructor(const FlyString& property_name, ConstructorType*&, Object& prototype);
 
+    Shape* m_empty_object_shape { nullptr };
+
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \
-    ConstructorName* m_##snake_name##_constructor { nullptr };
+    ConstructorName* m_##snake_name##_constructor { nullptr };                \
+    Object* m_##snake_name##_prototype { nullptr };
     JS_ENUMERATE_BUILTIN_TYPES
 #undef __JS_ENUMERATE
 };

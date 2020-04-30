@@ -28,6 +28,7 @@
 
 #include <AK/Function.h>
 #include <AK/HashMap.h>
+#include <AK/NonnullRefPtr.h>
 #include <AK/OwnPtr.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
@@ -42,9 +43,9 @@ class Region;
 
 namespace ELF {
 
-class Loader {
+class Loader : public RefCounted<Loader> {
 public:
-    explicit Loader(const u8*, size_t);
+    static NonnullRefPtr<Loader> create(const u8* data, size_t size) { return adopt(*new Loader(data, size)); }
     ~Loader();
 
     bool load();
@@ -52,9 +53,14 @@ public:
     Function<void*(VirtualAddress, size_t, size_t, bool, bool, const String&)> alloc_section_hook;
     Function<void*(size_t, size_t)> tls_section_hook;
     Function<void*(VirtualAddress, size_t, size_t, size_t, bool r, bool w, bool x, const String&)> map_section_hook;
-    VirtualAddress entry() const { return m_image.entry(); }
 #endif
-    char* symbol_ptr(const char* name);
+    VirtualAddress entry() const
+    {
+        return m_image.entry();
+    }
+    const Image& image() const { return m_image; }
+    char* symbol_ptr(const char* name) const;
+    Optional<Image::Symbol> find_demangled_function(const String& name) const;
 
     bool has_symbols() const { return m_symbol_count; }
 
@@ -62,6 +68,8 @@ public:
     Optional<Image::Symbol> find_symbol(u32 address, u32* offset = nullptr) const;
 
 private:
+    explicit Loader(const u8*, size_t);
+
     bool layout();
     bool perform_relocations();
     void* lookup(const ELF::Image::Symbol&);

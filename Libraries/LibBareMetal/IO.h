@@ -64,7 +64,7 @@ inline u32 in32(u16 port)
     return value;
 }
 
-inline void repeated_in16(u16 port, u8* buffer, int buffer_size)
+inline void repeated_in16(u16 port, u16* buffer, int buffer_size)
 {
     asm volatile("rep insw"
                  : "+D"(buffer), "+c"(buffer_size)
@@ -87,7 +87,7 @@ inline void out32(u16 port, u32 value)
     asm volatile("outl %0, %1" ::"a"(value), "Nd"(port));
 }
 
-inline void repeated_out16(u16 port, const u8* data, int data_size)
+inline void repeated_out16(u16 port, const u16* data, int data_size)
 {
     asm volatile("rep outsw"
                  : "+S"(data), "+c"(data_size)
@@ -118,7 +118,7 @@ public:
     void mask(u16 m) { m_address &= m; }
 
     template<typename T>
-    [[gnu::always_inline]] inline T in()
+    ALWAYS_INLINE T in()
     {
         if constexpr (sizeof(T) == 4)
             return IO::in32(get());
@@ -130,7 +130,7 @@ public:
     }
 
     template<typename T>
-    [[gnu::always_inline]] inline void out(T value)
+    ALWAYS_INLINE void out(T value)
     {
         if constexpr (sizeof(T) == 4) {
             IO::out32(get(), value);

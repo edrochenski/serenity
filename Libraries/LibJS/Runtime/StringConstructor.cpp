@@ -26,6 +26,7 @@
 
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/StringConstructor.h>
 #include <LibJS/Runtime/StringObject.h>
 #include <math.h>
@@ -33,9 +34,10 @@
 namespace JS {
 
 StringConstructor::StringConstructor()
+    : NativeFunction("String", *interpreter().global_object().function_prototype())
 {
-    put("prototype", interpreter().string_prototype());
-    put("length", Value(1));
+    put("prototype", interpreter().global_object().string_prototype(), 0);
+    put("length", Value(1), Attribute::Configurable);
 }
 
 StringConstructor::~StringConstructor()
@@ -56,7 +58,9 @@ Value StringConstructor::construct(Interpreter& interpreter)
         primitive_string = js_string(interpreter, "");
     else
         primitive_string = js_string(interpreter, interpreter.argument(0).to_string());
-    return Value(interpreter.heap().allocate<StringObject>(primitive_string));
+    if (!primitive_string)
+        return {};
+    return StringObject::create(interpreter.global_object(), *primitive_string);
 }
 
 }

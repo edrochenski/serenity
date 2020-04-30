@@ -57,6 +57,15 @@ public:
 
     bool is_nan() const { return is_number() && __builtin_isnan(as_double()); }
     bool is_infinity() const { return is_number() && __builtin_isinf(as_double()); }
+    bool is_positive_zero() const { return is_number() && 1.0 / as_double() == __builtin_huge_val(); }
+    bool is_negative_zero() const { return is_number() && 1.0 / as_double() == -__builtin_huge_val(); }
+    bool is_finite_number() const
+    {
+        if (!is_number())
+            return false;
+        auto number = as_double();
+        return !__builtin_isnan(number) && !__builtin_isinf(number);
+    }
 
     Value()
         : m_type(Type::Empty)
@@ -73,6 +82,12 @@ public:
         : m_type(Type::Number)
     {
         m_value.as_double = value;
+    }
+
+    explicit Value(unsigned value)
+        : m_type(Type::Number)
+    {
+        m_value.as_double = static_cast<double>(value);
     }
 
     explicit Value(i32 value)
@@ -124,16 +139,16 @@ public:
         return *m_value.as_object;
     }
 
-    PrimitiveString* as_string()
+    PrimitiveString& as_string()
     {
         ASSERT(is_string());
-        return m_value.as_string;
+        return *m_value.as_string;
     }
 
-    const PrimitiveString* as_string() const
+    const PrimitiveString& as_string() const
     {
         ASSERT(is_string());
-        return m_value.as_string;
+        return *m_value.as_string;
     }
 
     Cell* as_cell()
@@ -147,11 +162,19 @@ public:
     Value to_number() const;
     i32 to_i32() const;
     double to_double() const;
+    Value to_primitive(Interpreter&) const;
 
     Object* to_object(Heap&) const;
 
+    Value value_or(Value fallback) const
+    {
+        if (is_empty())
+            return fallback;
+        return *this;
+    }
+
 private:
-    Type m_type { Type::Undefined };
+    Type m_type { Type::Empty };
 
     union {
         bool as_bool;
@@ -187,27 +210,29 @@ inline Value js_negative_infinity()
     return Value(-__builtin_huge_val());
 }
 
-Value greater_than(Value lhs, Value rhs);
-Value greater_than_equals(Value lhs, Value rhs);
-Value less_than(Value lhs, Value rhs);
-Value less_than_equals(Value lhs, Value rhs);
-Value bitwise_and(Value lhs, Value rhs);
-Value bitwise_or(Value lhs, Value rhs);
-Value bitwise_xor(Value lhs, Value rhs);
-Value bitwise_not(Value);
-Value unary_plus(Value);
-Value unary_minus(Value);
-Value left_shift(Value lhs, Value rhs);
-Value right_shift(Value lhs, Value rhs);
-Value add(Value lhs, Value rhs);
-Value sub(Value lhs, Value rhs);
-Value mul(Value lhs, Value rhs);
-Value div(Value lhs, Value rhs);
-Value mod(Value lhs, Value rhs);
-Value exp(Value lhs, Value rhs);
-Value eq(Value lhs, Value rhs);
-Value typed_eq(Value lhs, Value rhs);
-Value instance_of(Value lhs, Value rhs);
+Value greater_than(Interpreter&, Value lhs, Value rhs);
+Value greater_than_equals(Interpreter&, Value lhs, Value rhs);
+Value less_than(Interpreter&, Value lhs, Value rhs);
+Value less_than_equals(Interpreter&, Value lhs, Value rhs);
+Value bitwise_and(Interpreter&, Value lhs, Value rhs);
+Value bitwise_or(Interpreter&, Value lhs, Value rhs);
+Value bitwise_xor(Interpreter&, Value lhs, Value rhs);
+Value bitwise_not(Interpreter&, Value);
+Value unary_plus(Interpreter&, Value);
+Value unary_minus(Interpreter&, Value);
+Value left_shift(Interpreter&, Value lhs, Value rhs);
+Value right_shift(Interpreter&, Value lhs, Value rhs);
+Value unsigned_right_shift(Interpreter&, Value lhs, Value rhs);
+Value add(Interpreter&, Value lhs, Value rhs);
+Value sub(Interpreter&, Value lhs, Value rhs);
+Value mul(Interpreter&, Value lhs, Value rhs);
+Value div(Interpreter&, Value lhs, Value rhs);
+Value mod(Interpreter&, Value lhs, Value rhs);
+Value exp(Interpreter&, Value lhs, Value rhs);
+Value eq(Interpreter&, Value lhs, Value rhs);
+Value typed_eq(Interpreter&, Value lhs, Value rhs);
+Value in(Interpreter&, Value lhs, Value rhs);
+Value instance_of(Interpreter&, Value lhs, Value rhs);
 
 const LogStream& operator<<(const LogStream&, const Value&);
 

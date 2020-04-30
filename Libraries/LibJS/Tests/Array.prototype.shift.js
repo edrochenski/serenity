@@ -1,3 +1,5 @@
+load("test-common.js");
+
 try {
     var a = [1, 2, 3];
     var value = a.shift();
@@ -10,6 +12,8 @@ try {
     var value = a.shift();
     assert(value === undefined);
     assert(a.length === 0);
+
+    assert([,].shift() === undefined);
 
     console.log("PASS");
 } catch (e) {

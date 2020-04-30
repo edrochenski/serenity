@@ -27,10 +27,16 @@
 #include <AK/FlyString.h>
 #include <AK/Function.h>
 #include <LibJS/Interpreter.h>
+#include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/Value.h>
 #include <LibWeb/Bindings/CanvasRenderingContext2DWrapper.h>
+#include <LibWeb/Bindings/HTMLImageElementWrapper.h>
+#include <LibWeb/Bindings/ImageDataWrapper.h>
 #include <LibWeb/DOM/CanvasRenderingContext2D.h>
+#include <LibWeb/DOM/HTMLImageElement.h>
+#include <LibWeb/DOM/ImageData.h>
 
 namespace Web {
 namespace Bindings {
@@ -41,7 +47,8 @@ CanvasRenderingContext2DWrapper* wrap(JS::Heap& heap, CanvasRenderingContext2D& 
 }
 
 CanvasRenderingContext2DWrapper::CanvasRenderingContext2DWrapper(CanvasRenderingContext2D& impl)
-    : m_impl(impl)
+    : Wrapper(*interpreter().global_object().object_prototype())
+    , m_impl(impl)
 {
     put_native_property("fillStyle", fill_style_getter, fill_style_setter);
     put_native_function("fillRect", fill_rect, 4);
@@ -49,6 +56,18 @@ CanvasRenderingContext2DWrapper::CanvasRenderingContext2DWrapper(CanvasRendering
     put_native_function("translate", translate, 2);
     put_native_property("strokeStyle", stroke_style_getter, stroke_style_setter);
     put_native_function("strokeRect", stroke_rect, 4);
+    put_native_function("drawImage", draw_image, 3);
+
+    put_native_function("beginPath", begin_path, 0);
+    put_native_function("closePath", close_path, 0);
+    put_native_function("stroke", stroke, 0);
+    put_native_function("moveTo", move_to, 2);
+    put_native_function("lineTo", line_to, 2);
+
+    put_native_function("createImageData", create_image_data, 1);
+    put_native_function("putImageData", put_image_data, 3);
+
+    put_native_property("lineWidth", line_width_getter, line_width_setter);
 }
 
 CanvasRenderingContext2DWrapper::~CanvasRenderingContext2DWrapper()
@@ -83,6 +102,28 @@ JS::Value CanvasRenderingContext2DWrapper::stroke_rect(JS::Interpreter& interpre
     auto& arguments = interpreter.call_frame().arguments;
     if (arguments.size() >= 4)
         impl->stroke_rect(arguments[0].to_double(), arguments[1].to_double(), arguments[2].to_double(), arguments[3].to_double());
+    return JS::js_undefined();
+}
+
+JS::Value CanvasRenderingContext2DWrapper::draw_image(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+    auto& arguments = interpreter.call_frame().arguments;
+    if (arguments.size() < 3)
+        return interpreter.throw_exception<JS::TypeError>("drawImage() needs more arguments");
+
+    auto* image_argument = arguments[0].to_object(interpreter.heap());
+    if (!image_argument)
+        return {};
+    if (StringView(image_argument->class_name()) != "HTMLImageElementWrapper")
+        return interpreter.throw_exception<JS::TypeError>(String::format("Image is not an HTMLImageElement, it's an %s", image_argument->class_name()));
+
+    auto x = arguments[1].to_double();
+    auto y = arguments[2].to_double();
+
+    impl->draw_image(static_cast<const HTMLImageElementWrapper&>(*image_argument).node(), x, y);
     return JS::js_undefined();
 }
 
@@ -134,6 +175,101 @@ void CanvasRenderingContext2DWrapper::stroke_style_setter(JS::Interpreter& inter
 {
     if (auto* impl = impl_from(interpreter))
         impl->set_stroke_style(value.to_string());
+}
+
+JS::Value CanvasRenderingContext2DWrapper::line_width_getter(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+    return JS::Value(impl->line_width());
+}
+
+void CanvasRenderingContext2DWrapper::line_width_setter(JS::Interpreter& interpreter, JS::Value value)
+{
+    if (auto* impl = impl_from(interpreter))
+        impl->set_line_width(value.to_double());
+}
+
+JS::Value CanvasRenderingContext2DWrapper::begin_path(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+    impl->begin_path();
+    return JS::js_undefined();
+}
+
+JS::Value CanvasRenderingContext2DWrapper::close_path(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+    impl->close_path();
+    return JS::js_undefined();
+}
+
+JS::Value CanvasRenderingContext2DWrapper::stroke(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+    impl->stroke();
+    return JS::js_undefined();
+}
+
+JS::Value CanvasRenderingContext2DWrapper::move_to(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+    double x = interpreter.argument(0).to_double();
+    double y = interpreter.argument(1).to_double();
+    impl->move_to(x, y);
+    return JS::js_undefined();
+}
+
+JS::Value CanvasRenderingContext2DWrapper::line_to(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+    double x = interpreter.argument(0).to_double();
+    double y = interpreter.argument(1).to_double();
+    impl->line_to(x, y);
+    return JS::js_undefined();
+}
+
+JS::Value CanvasRenderingContext2DWrapper::create_image_data(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+    i32 width = interpreter.argument(0).to_i32();
+    i32 height = interpreter.argument(1).to_i32();
+    auto image_data = impl->create_image_data(interpreter.global_object(), width, height);
+    return wrap(interpreter.heap(), *image_data);
+}
+
+JS::Value CanvasRenderingContext2DWrapper::put_image_data(JS::Interpreter& interpreter)
+{
+    auto* impl = impl_from(interpreter);
+    if (!impl)
+        return {};
+
+    auto* image_data_object = interpreter.argument(0).to_object(interpreter.heap());
+    if (!image_data_object)
+        return {};
+
+    if (StringView(image_data_object->class_name()) != "ImageDataWrapper") {
+        return interpreter.throw_exception<JS::TypeError>("putImageData called with non-ImageData");
+    }
+
+    auto& image_data = static_cast<ImageDataWrapper*>(image_data_object)->impl();
+    auto x = interpreter.argument(1).to_double();
+    auto y = interpreter.argument(2).to_double();
+    impl->put_image_data(image_data, x, y);
+    return JS::js_undefined();
 }
 
 }

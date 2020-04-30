@@ -31,17 +31,19 @@
 
 namespace GUI {
 
-class ColorInput : public TextEditor {
-    C_OBJECT(ColorInput)
+class ColorInput final : public TextEditor {
+    C_OBJECT(ColorInput);
 
 public:
-    ColorInput();
     virtual ~ColorInput() override;
 
-    void set_color(Color color);
+    bool has_alpha_channel() const { return m_color_has_alpha_channel; }
+    void set_color_has_alpha_channel(bool has_alpha) { m_color_has_alpha_channel = has_alpha; }
+
+    void set_color(Color);
     Color color() { return m_color; }
 
-    void set_color_picker_title(String title) { m_color_picker_title = title; }
+    void set_color_picker_title(String title) { m_color_picker_title = move(title); }
     String color_picker_title() { return m_color_picker_title; }
 
     Function<void()> on_change;
@@ -49,18 +51,19 @@ public:
 protected:
     virtual void mousedown_event(MouseEvent&) override;
     virtual void mouseup_event(MouseEvent&) override;
-    virtual void enter_event(Core::Event&) override;
+    virtual void mousemove_event(MouseEvent&) override;
     virtual void paint_event(PaintEvent&) override;
 
 private:
-    virtual void click();
+    ColorInput();
+
+    Gfx::Rect color_rect() const;
+    void set_color_without_changing_text(Color);
 
     Color m_color;
-    String m_color_picker_title { "Select Color" };
-
-    int m_auto_repeat_interval { 0 };
-    bool m_being_pressed { false };
-    RefPtr<Core::Timer> m_auto_repeat_timer;
+    String m_color_picker_title { "Select color" };
+    bool m_color_has_alpha_channel { true };
+    bool m_may_be_color_rect_click { false };
 };
 
 }

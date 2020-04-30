@@ -1,21 +1,25 @@
 ## Name
 
-mkdir - create a directory
+mkdir - create directories
 
 ## Synopsis
 
 ```**sh
-$ mkdir path
+$ mkdir [ options...] directories...
 ```
 
 ## Description
 
-Create a new empty directory at the given *path*.
+Create a new empty directory for each of the given *directories*.
+
+## Options
+
+* `-p`, `--parents`: Create parent directories if they don't exist
 
 ## Examples
 
 ```sh
-$ mkdir /tmp/foo
+$ mkdir -p /tmp/foo/bar
 ```
 
 ## See also

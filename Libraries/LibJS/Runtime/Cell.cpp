@@ -34,10 +34,16 @@
 
 namespace JS {
 
+void Cell::Visitor::visit(Cell* cell)
+{
+    if (cell)
+        visit_impl(cell);
+}
+
 void Cell::Visitor::visit(Value value)
 {
     if (value.is_cell())
-        visit(value.as_cell());
+        visit_impl(value.as_cell());
 }
 
 Heap& Cell::heap() const
@@ -46,6 +52,11 @@ Heap& Cell::heap() const
 }
 
 Interpreter& Cell::interpreter()
+{
+    return heap().interpreter();
+}
+
+Interpreter& Cell::interpreter() const
 {
     return heap().interpreter();
 }

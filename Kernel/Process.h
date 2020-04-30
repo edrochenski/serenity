@@ -39,6 +39,7 @@
 #include <Kernel/Thread.h>
 #include <Kernel/UnixTypes.h>
 #include <Kernel/VM/RangeAllocator.h>
+#include <LibBareMetal/StdLib.h>
 #include <LibC/signal_numbers.h>
 
 namespace ELF {
@@ -97,6 +98,9 @@ struct UnveiledPath {
 };
 
 class Process : public InlineLinkedListNode<Process> {
+    AK_MAKE_NONCOPYABLE(Process);
+    AK_MAKE_NONMOVABLE(Process);
+
     friend class InlineLinkedListNode<Process>;
     friend class Thread;
 
@@ -204,6 +208,7 @@ public:
     int sys$set_mmap_name(const Syscall::SC_set_mmap_name_params*);
     int sys$mprotect(void*, size_t, int prot);
     int sys$madvise(void*, size_t, int advice);
+    int sys$minherit(void*, size_t, int inherit);
     int sys$purge(int mode);
     int sys$select(const Syscall::SC_select_params*);
     int sys$poll(pollfd*, int nfds, int timeout);
@@ -218,6 +223,7 @@ public:
     int sys$clock_settime(clockid_t, timespec*);
     int sys$clock_nanosleep(const Syscall::SC_clock_nanosleep_params*);
     int sys$gethostname(char*, ssize_t);
+    int sys$sethostname(const char*, ssize_t);
     int sys$uname(utsname*);
     int sys$readlink(const Syscall::SC_readlink_params*);
     int sys$ttyname_r(int fd, char*, ssize_t);
@@ -267,7 +273,7 @@ public:
     int sys$getpeername(const Syscall::SC_getpeername_params*);
     int sys$sched_setparam(pid_t pid, const struct sched_param* param);
     int sys$sched_getparam(pid_t pid, struct sched_param* param);
-    int sys$create_thread(void* (*)(void*), void* argument, const Syscall::SC_create_thread_params*);
+    int sys$create_thread(void* (*)(void*), const Syscall::SC_create_thread_params*);
     void sys$exit_thread(void*);
     int sys$join_thread(int tid, void** exit_value);
     int sys$detach_thread(int tid);
@@ -324,14 +330,14 @@ public:
     u32 m_ticks_in_user_for_dead_children { 0 };
     u32 m_ticks_in_kernel_for_dead_children { 0 };
 
-    bool validate_read_from_kernel(VirtualAddress, size_t) const;
+    [[nodiscard]] bool validate_read_from_kernel(VirtualAddress, size_t) const;
 
-    bool validate_read(const void*, size_t) const;
-    bool validate_write(void*, size_t) const;
+    [[nodiscard]] bool validate_read(const void*, size_t) const;
+    [[nodiscard]] bool validate_write(void*, size_t) const;
     template<typename T>
-    bool validate_read_typed(T* value, size_t count = 1) { return validate_read(value, sizeof(T) * count); }
+    [[nodiscard]] bool validate_read_typed(T* value, size_t count = 1) { return validate_read(value, sizeof(T) * count); }
     template<typename T>
-    bool validate_read_and_copy_typed(T* dest, const T* src)
+    [[nodiscard]] bool validate_read_and_copy_typed(T* dest, const T* src)
     {
         bool validated = validate_read_typed(src);
         if (validated) {
@@ -340,14 +346,14 @@ public:
         return validated;
     }
     template<typename T>
-    bool validate_write_typed(T* value, size_t count = 1) { return validate_write(value, sizeof(T) * count); }
+    [[nodiscard]] bool validate_write_typed(T* value, size_t count = 1) { return validate_write(value, sizeof(T) * count); }
     template<typename DataType, typename SizeType>
-    bool validate(const Syscall::MutableBufferArgument<DataType, SizeType>&);
+    [[nodiscard]] bool validate(const Syscall::MutableBufferArgument<DataType, SizeType>&);
     template<typename DataType, typename SizeType>
-    bool validate(const Syscall::ImmutableBufferArgument<DataType, SizeType>&);
+    [[nodiscard]] bool validate(const Syscall::ImmutableBufferArgument<DataType, SizeType>&);
 
-    String validate_and_copy_string_from_user(const char*, size_t) const;
-    String validate_and_copy_string_from_user(const Syscall::StringArgument&) const;
+    [[nodiscard]] String validate_and_copy_string_from_user(const char*, size_t) const;
+    [[nodiscard]] String validate_and_copy_string_from_user(const Syscall::StringArgument&) const;
 
     Custody& current_directory();
     Custody* executable() { return m_executable.ptr(); }
@@ -389,7 +395,7 @@ public:
 
     struct ELFBundle {
         OwnPtr<Region> region;
-        OwnPtr<ELF::Loader> elf_loader;
+        RefPtr<ELF::Loader> elf_loader;
     };
     OwnPtr<ELFBundle> elf_bundle() const;
 
@@ -409,6 +415,11 @@ public:
 
     void increment_inspector_count(Badge<ProcessInspectionHandle>) { ++m_inspector_count; }
     void decrement_inspector_count(Badge<ProcessInspectionHandle>) { --m_inspector_count; }
+
+    void set_wait_for_tracer_at_next_execve(bool val) { m_wait_for_tracer_at_next_execve = val; }
+
+    KResultOr<u32> peek_user_data(u32* address);
+    KResult poke_user_data(u32* address, u32 data);
 
 private:
     friend class MemoryManager;
@@ -435,6 +446,8 @@ private:
 
     KResult do_kill(Process&, int signal);
     KResult do_killpg(pid_t pgrp, int signal);
+    KResult do_killall(int signal);
+    KResult do_killself(int signal);
 
     KResultOr<siginfo_t> do_waitid(idtype_t idtype, int id, int options);
 

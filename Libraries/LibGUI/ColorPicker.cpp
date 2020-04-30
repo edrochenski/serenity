@@ -50,16 +50,18 @@ public:
 
 protected:
     virtual void click() override;
+    virtual void doubleclick_event(GUI::MouseEvent&) override;
     virtual void paint_event(PaintEvent&) override;
 
 private:
-    explicit ColorButton(Color color = {});
+    explicit ColorButton(ColorPicker& picker, Color color = {});
 
+    ColorPicker& m_picker;
     Color m_color;
     bool m_selected { false };
 };
 
-class CustomColorWidget final : public GUI::Widget {
+class CustomColorWidget final : public GUI::Frame {
     C_OBJECT(CustomColorWidget);
 
 public:
@@ -70,10 +72,10 @@ private:
     CustomColorWidget();
 
     RefPtr<Gfx::Bitmap> m_custom_colors;
-    bool m_status { false };
+    bool m_being_pressed { false };
     Gfx::Point m_last_position;
 
-    void fire_event(GUI::MouseEvent& event);
+    void pick_color_at_position(GUI::MouseEvent& event);
 
     virtual void mousedown_event(GUI::MouseEvent&) override;
     virtual void mouseup_event(GUI::MouseEvent&) override;
@@ -130,20 +132,20 @@ void ColorPicker::build_ui()
     button_container.layout()->set_spacing(4);
     button_container.layout()->add_spacer();
 
+    auto& ok_button = button_container.add<Button>();
+    ok_button.set_size_policy(SizePolicy::Fixed, SizePolicy::Fill);
+    ok_button.set_preferred_size(80, 0);
+    ok_button.set_text("OK");
+    ok_button.on_click = [this] {
+        done(ExecOK);
+    };
+
     auto& cancel_button = button_container.add<Button>();
     cancel_button.set_size_policy(SizePolicy::Fixed, SizePolicy::Fill);
     cancel_button.set_preferred_size(80, 0);
     cancel_button.set_text("Cancel");
     cancel_button.on_click = [this] {
         done(ExecCancel);
-    };
-
-    auto& ok_button = button_container.add<Button>();
-    ok_button.set_size_policy(SizePolicy::Fixed, SizePolicy::Fill);
-    ok_button.set_preferred_size(80, 0);
-    ok_button.set_text("Select");
-    ok_button.on_click = [this] {
-        done(ExecOK);
     };
 }
 
@@ -223,7 +225,7 @@ void ColorPicker::build_ui_custom(Widget& root_container)
 
     m_html_text = html_container.add<GUI::TextBox>();
     m_html_text->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
-    m_html_text->set_text(m_color.to_string());
+    m_html_text->set_text(m_color_has_alpha_channel ? m_color.to_string() : m_color.to_string_without_alpha());
     m_html_text->on_change = [this]() {
         auto color_name = this->m_html_text->text();
         auto optional_color = Color::from_string(color_name);
@@ -299,7 +301,7 @@ void ColorPicker::update_color_widgets()
     m_preview_widget->set_palette(pal);
     m_preview_widget->update();
 
-    m_html_text->set_text(m_color.to_string());
+    m_html_text->set_text(m_color_has_alpha_channel ? m_color.to_string() : m_color.to_string_without_alpha());
 
     m_red_spinbox->set_value(m_color.red());
     m_green_spinbox->set_value(m_color.green());
@@ -310,7 +312,7 @@ void ColorPicker::create_color_button(Widget& container, unsigned rgb)
 {
     Color color = Color::from_rgb(rgb);
 
-    auto& widget = container.add<ColorButton>(color);
+    auto& widget = container.add<ColorButton>(*this, color);
     widget.set_size_policy(SizePolicy::Fill, SizePolicy::Fill);
     widget.on_click = [this](Color color) {
         for (auto& value : m_color_widgets) {
@@ -328,10 +330,10 @@ void ColorPicker::create_color_button(Widget& container, unsigned rgb)
     m_color_widgets.append(&widget);
 }
 
-ColorButton::ColorButton(Color color)
+ColorButton::ColorButton(ColorPicker& picker, Color color)
+    : m_picker(picker)
 {
     m_color = color;
-    m_selected = false;
 }
 
 ColorButton::~ColorButton()
@@ -341,6 +343,13 @@ ColorButton::~ColorButton()
 void ColorButton::set_selected(bool selected)
 {
     m_selected = selected;
+}
+
+void ColorButton::doubleclick_event(GUI::MouseEvent&)
+{
+    click();
+    m_selected = true;
+    m_picker.done(Dialog::ExecOK);
 }
 
 void ColorButton::paint_event(PaintEvent& event)
@@ -400,22 +409,20 @@ void CustomColorWidget::clear_last_position()
     update();
 }
 
-void CustomColorWidget::fire_event(GUI::MouseEvent& event)
+void CustomColorWidget::pick_color_at_position(GUI::MouseEvent& event)
 {
-    if (!m_status)
+    if (!m_being_pressed)
         return;
 
-    if (!on_pick)
+    auto position = event.position().translated(-frame_thickness(), -frame_thickness());
+    if (!frame_inner_rect().contains(position))
         return;
 
-    auto position = event.position();
-    if (!this->rect().contains(position)) {
-        return;
-    }
+    auto color = m_custom_colors->get_pixel(position);
     m_last_position = position;
 
-    auto color = this->window()->back_bitmap()->get_pixel(position);
-    on_pick(color);
+    if (on_pick)
+        on_pick(color);
 
     update();
 }
@@ -423,34 +430,38 @@ void CustomColorWidget::fire_event(GUI::MouseEvent& event)
 void CustomColorWidget::mousedown_event(GUI::MouseEvent& event)
 {
     if (event.button() == GUI::MouseButton::Left) {
-        m_status = true;
-    } else {
-        m_status = false;
+        m_being_pressed = true;
+        pick_color_at_position(event);
     }
 }
 
 void CustomColorWidget::mouseup_event(GUI::MouseEvent& event)
 {
-    fire_event(event);
-    m_status = false;
+    if (event.button() == GUI::MouseButton::Left) {
+        m_being_pressed = false;
+        pick_color_at_position(event);
+    }
 }
 
 void CustomColorWidget::mousemove_event(GUI::MouseEvent& event)
 {
-    fire_event(event);
+    if (event.buttons() & GUI::MouseButton::Left)
+        pick_color_at_position(event);
 }
 
 void CustomColorWidget::paint_event(GUI::PaintEvent& event)
 {
-    GUI::Painter painter(*this);
-    Gfx::Rect rect = event.rect();
+    Frame::paint_event(event);
 
-    painter.add_clip_rect(rect);
+    Painter painter(*this);
+    painter.add_clip_rect(event.rect());
+    painter.add_clip_rect(frame_inner_rect());
 
-    painter.draw_scaled_bitmap(rect, *m_custom_colors, m_custom_colors->rect());
+    painter.draw_scaled_bitmap(frame_inner_rect(), *m_custom_colors, m_custom_colors->rect());
 
-    painter.draw_line({ m_last_position.x(), 0 }, { m_last_position.x(), rect.height() }, Color::Black);
-    painter.draw_line({ 0, m_last_position.y() }, { rect.width(), m_last_position.y() }, Color::Black);
+    painter.translate(frame_thickness(), frame_thickness());
+    painter.draw_line({ m_last_position.x(), 0 }, { m_last_position.x(), height() }, Color::Black);
+    painter.draw_line({ 0, m_last_position.y() }, { width(), m_last_position.y() }, Color::Black);
 }
 
 void CustomColorWidget::resize_event(ResizeEvent&)

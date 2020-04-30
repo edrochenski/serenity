@@ -35,6 +35,7 @@
 #include <AK/StringBuilder.h>
 #include <AK/Utf8View.h>
 #include <LibGfx/CharacterBitmap.h>
+#include <LibGfx/Path.h>
 #include <math.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -43,18 +44,10 @@
 #    pragma GCC optimize("O3")
 #endif
 
-#ifndef ALWAYS_INLINE
-#    if __has_attribute(always_inline)
-#        define ALWAYS_INLINE __attribute__((always_inline))
-#    else
-#        define ALWAYS_INLINE inline
-#    endif
-#endif
-
 namespace Gfx {
 
 template<BitmapFormat format = BitmapFormat::Invalid>
-static ALWAYS_INLINE Color get_pixel(const Gfx::Bitmap& bitmap, int x, int y)
+ALWAYS_INLINE Color get_pixel(const Gfx::Bitmap& bitmap, int x, int y)
 {
     if constexpr (format == BitmapFormat::Indexed8)
         return bitmap.palette_color(bitmap.bits(y)[x]);
@@ -326,6 +319,74 @@ void Painter::draw_bitmap(const Point& p, const GlyphBitmap& bitmap, Color color
                 dst[j] = color.value();
         }
         dst += dst_skip;
+    }
+}
+
+void Painter::draw_triangle(const Point& a, const Point& b, const Point& c, Color color)
+{
+    RGBA32 rgba = color.value();
+
+    Point p0(a);
+    Point p1(b);
+    Point p2(c);
+
+    if (p0.y() > p1.y())
+        swap(p0, p1);
+    if (p0.y() > p2.y())
+        swap(p0, p2);
+    if (p1.y() > p2.y())
+        swap(p1, p2);
+
+    auto clip = clip_rect();
+    if (p0.y() >= clip.bottom())
+        return;
+    if (p2.y() < clip.top())
+        return;
+
+    float dx01 = (float)(p1.x() - p0.x()) / (p1.y() - p0.y());
+    float dx02 = (float)(p2.x() - p0.x()) / (p2.y() - p0.y());
+    float dx12 = (float)(p2.x() - p1.x()) / (p2.y() - p1.y());
+
+    float x01 = p0.x();
+    float x02 = p0.x();
+
+    int top = p0.y();
+    if (top < clip.top()) {
+        x01 += dx01 * (clip.top() - top);
+        x02 += dx02 * (clip.top() - top);
+        top = clip.top();
+    }
+
+    for (int y = top; y < p1.y() && y < clip.bottom(); ++y) {
+        int start = x01 > x02 ? max((int)x02, clip.left()) : max((int)x01, clip.left());
+        int end = x01 > x02 ? min((int)x01, clip.right()) : min((int)x02, clip.right());
+        auto* scanline = m_target->scanline(y);
+        for (int x = start; x < end; x++) {
+            scanline[x] = rgba;
+        }
+        x01 += dx01;
+        x02 += dx02;
+    }
+
+    x02 = p0.x() + dx02 * (p1.y() - p0.y());
+    float x12 = p1.x();
+
+    top = p1.y();
+    if (top < clip.top()) {
+        x02 += dx02 * (clip.top() - top);
+        x12 += dx12 * (clip.top() - top);
+        top = clip.top();
+    }
+
+    for (int y = top; y < p2.y() && y < clip.bottom(); ++y) {
+        int start = x12 > x02 ? max((int)x02, clip.left()) : max((int)x12, clip.left());
+        int end = x12 > x02 ? min((int)x12, clip.right()) : min((int)x02, clip.right());
+        auto* scanline = m_target->scanline(y);
+        for (int x = start; x < end; x++) {
+            scanline[x] = rgba;
+        }
+        x02 += dx02;
+        x12 += dx12;
     }
 }
 
@@ -683,12 +744,12 @@ void Painter::draw_scaled_bitmap(const Rect& a_dst_rect, const Gfx::Bitmap& sour
     }
 }
 
-[[gnu::flatten]] void Painter::draw_glyph(const Point& point, char ch, Color color)
+FLATTEN void Painter::draw_glyph(const Point& point, char ch, Color color)
 {
     draw_glyph(point, ch, font(), color);
 }
 
-[[gnu::flatten]] void Painter::draw_glyph(const Point& point, char ch, const Font& font, Color color)
+FLATTEN void Painter::draw_glyph(const Point& point, char ch, const Font& font, Color color)
 {
     draw_bitmap(point, font.glyph_bitmap(ch), color);
 }
@@ -867,7 +928,7 @@ void Painter::set_pixel(const Point& p, Color color)
     m_target->scanline(point.y())[point.x()] = color.value();
 }
 
-[[gnu::always_inline]] inline void Painter::set_pixel_with_draw_op(u32& pixel, const Color& color)
+ALWAYS_INLINE void Painter::set_pixel_with_draw_op(u32& pixel, const Color& color)
 {
     if (draw_op() == DrawOp::Copy)
         pixel = color.value();
@@ -1008,6 +1069,26 @@ PainterStateSaver::PainterStateSaver(Painter& painter)
 PainterStateSaver::~PainterStateSaver()
 {
     m_painter.restore();
+}
+
+void Painter::stroke_path(const Path& path, Color color, int thickness)
+{
+    FloatPoint cursor;
+
+    for (auto& segment : path.segments()) {
+        switch (segment.type) {
+        case Path::Segment::Type::Invalid:
+            ASSERT_NOT_REACHED();
+            break;
+        case Path::Segment::Type::MoveTo:
+            cursor = segment.point;
+            break;
+        case Path::Segment::Type::LineTo:
+            draw_line(Point(cursor.x(), cursor.y()), Point(segment.point.x(), segment.point.y()), color, thickness);
+            cursor = segment.point;
+            break;
+        }
+    }
 }
 
 }

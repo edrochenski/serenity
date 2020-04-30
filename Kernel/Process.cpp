@@ -26,6 +26,7 @@
 
 #include <AK/Demangle.h>
 #include <AK/FileSystemPath.h>
+#include <AK/RefPtr.h>
 #include <AK/ScopeGuard.h>
 #include <AK/StdLibExtras.h>
 #include <AK/StringBuilder.h>
@@ -57,6 +58,7 @@
 #include <Kernel/PerformanceEventBuffer.h>
 #include <Kernel/Process.h>
 #include <Kernel/Profiling.h>
+#include <Kernel/Ptrace.h>
 #include <Kernel/RTC.h>
 #include <Kernel/Random.h>
 #include <Kernel/Scheduler.h>
@@ -69,6 +71,7 @@
 #include <Kernel/Time/TimeManagement.h>
 #include <Kernel/VM/PageDirectory.h>
 #include <Kernel/VM/PrivateInodeVMObject.h>
+#include <Kernel/VM/ProcessPagingScope.h>
 #include <Kernel/VM/PurgeableVMObject.h>
 #include <Kernel/VM/SharedInodeVMObject.h>
 #include <LibBareMetal/IO.h>
@@ -632,6 +635,32 @@ int Process::sys$madvise(void* address, size_t size, int advice)
     return -EINVAL;
 }
 
+int Process::sys$minherit(void* address, size_t size, int inherit)
+{
+    REQUIRE_PROMISE(stdio);
+
+    auto* region = region_from_range({ VirtualAddress(address), size });
+    if (!region)
+        return -EINVAL;
+
+    if (!region->is_mmap())
+        return -EINVAL;
+
+    if (region->is_shared())
+        return -EINVAL;
+
+    if (!region->vmobject().is_anonymous())
+        return -EINVAL;
+
+    switch (inherit) {
+    case MAP_INHERIT_ZERO:
+        region->set_inherit_mode(Region::InheritMode::ZeroedOnFork);
+        return 0;
+    }
+
+    return -EINVAL;
+}
+
 int Process::sys$purge(int mode)
 {
     REQUIRE_NO_PROMISES;
@@ -676,10 +705,24 @@ int Process::sys$gethostname(char* buffer, ssize_t size)
         return -EINVAL;
     if (!validate_write(buffer, size))
         return -EFAULT;
-    LOCKER(*s_hostname_lock);
+    LOCKER(*s_hostname_lock, Lock::Mode::Shared);
     if ((size_t)size < (s_hostname->length() + 1))
         return -ENAMETOOLONG;
     copy_to_user(buffer, s_hostname->characters(), s_hostname->length() + 1);
+    return 0;
+}
+
+int Process::sys$sethostname(const char* hostname, ssize_t length)
+{
+    REQUIRE_PROMISE(stdio);
+    if (!is_superuser())
+        return -EPERM;
+    if (length < 0)
+        return -EINVAL;
+    LOCKER(*s_hostname_lock, Lock::Mode::Exclusive);
+    if (length > 64)
+        return -ENAMETOOLONG;
+    *s_hostname = validate_and_copy_string_from_user(hostname, length);
     return 0;
 }
 
@@ -857,7 +900,7 @@ int Process::do_exec(NonnullRefPtr<FileDescription> main_program_description, Ve
     u32 entry_eip = 0;
 
     MM.enter_process_paging_scope(*this);
-    OwnPtr<ELF::Loader> loader;
+    RefPtr<ELF::Loader> loader;
     {
         ArmedScopeGuard rollback_regions_guard([&]() {
             ASSERT(Process::current == this);
@@ -865,7 +908,7 @@ int Process::do_exec(NonnullRefPtr<FileDescription> main_program_description, Ve
             m_regions = move(old_regions);
             MM.enter_process_paging_scope(*this);
         });
-        loader = make<ELF::Loader>(region->vaddr().as_ptr(), loader_metadata.size);
+        loader = ELF::Loader::create(region->vaddr().as_ptr(), loader_metadata.size);
         // Load the correct executable -- either interp or main program.
         // FIXME: Once we actually load both interp and main, we'll need to be more clever about this.
         //     In that case, both will be ET_DYN objects, so they'll both be completely relocatable.
@@ -1216,6 +1259,13 @@ int Process::exec(String path, Vector<String> arguments, Vector<String> environm
     if (rc < 0)
         return rc;
 
+    if (m_wait_for_tracer_at_next_execve) {
+        ASSERT(Thread::current->state() == Thread::State::Skip1SchedulerPass);
+        // State::Skip1SchedulerPass is irrelevant since we block the thread
+        Thread::current->set_state(Thread::State::Running);
+        Thread::current->send_urgent_signal_to_self(SIGSTOP);
+    }
+
     if (Process::current == this) {
         Scheduler::yield();
         ASSERT_NOT_REACHED();
@@ -1505,7 +1555,6 @@ void Process::crash(int signal, u32 eip)
         dbg() << "\033[31;1m" << String::format("%p", eip) << "  (?)\033[0m\n";
     }
     dump_backtrace();
-
     m_termination_signal = signal;
     dump_regions();
     ASSERT(is_ring3());
@@ -1916,10 +1965,10 @@ int Process::sys$readlink(const Syscall::SC_readlink_params* user_params)
         return -EIO; // FIXME: Get a more detailed error from VFS.
 
     auto link_target = String::copy(contents);
-    if (link_target.length() + 1 > params.buffer.size)
+    if (link_target.length() > params.buffer.size)
         return -ENAMETOOLONG;
-    copy_to_user(params.buffer.data, link_target.characters(), link_target.length() + 1);
-    return link_target.length() + 1;
+    copy_to_user(params.buffer.data, link_target.characters(), link_target.length());
+    return link_target.length();
 }
 
 int Process::sys$chdir(const char* user_path, size_t path_length)
@@ -2123,7 +2172,7 @@ int Process::sys$uname(utsname* buf)
     REQUIRE_PROMISE(stdio);
     if (!validate_write_typed(buf))
         return -EFAULT;
-    LOCKER(*s_hostname_lock);
+    LOCKER(*s_hostname_lock, Lock::Mode::Shared);
     if (s_hostname->length() + 1 > sizeof(utsname::nodename))
         return -ENAMETOOLONG;
     copy_to_user(buf->sysname, "SerenityOS", 11);
@@ -2184,6 +2233,45 @@ KResult Process::do_killpg(pid_t pgrp, int signal)
     return error;
 }
 
+KResult Process::do_killall(int signal)
+{
+    InterruptDisabler disabler;
+
+    bool any_succeeded = false;
+    KResult error = KSuccess;
+
+    // Send the signal to all processes we have access to for.
+    for (auto& process : *g_processes) {
+        KResult res = KSuccess;
+        if (process.pid() == m_pid)
+            res = do_killself(signal);
+        else
+            res = do_kill(process, signal);
+
+        if (res.is_success())
+            any_succeeded = true;
+        else
+            error = res;
+    }
+
+    if (any_succeeded)
+        return KSuccess;
+    return error;
+}
+
+KResult Process::do_killself(int signal)
+{
+    if (signal == 0)
+        return KSuccess;
+
+    if (!Thread::current->should_ignore_signal(signal)) {
+        Thread::current->send_signal(signal, this);
+        (void)Thread::current->block<Thread::SemiPermanentBlocker>(Thread::SemiPermanentBlocker::Reason::Signal);
+    }
+
+    return KSuccess;
+}
+
 int Process::sys$kill(pid_t pid, int signal)
 {
     if (pid == m_pid)
@@ -2193,23 +2281,15 @@ int Process::sys$kill(pid_t pid, int signal)
 
     if (signal < 0 || signal >= 32)
         return -EINVAL;
-    if (pid <= 0) {
+    if (pid < -1) {
         if (pid == INT32_MIN)
             return -EINVAL;
         return do_killpg(-pid, signal);
     }
-    if (pid == -1) {
-        // FIXME: Send to all processes.
-        return -ENOTIMPL;
-    }
+    if (pid == -1)
+        return do_killall(signal);
     if (pid == m_pid) {
-        if (signal == 0)
-            return 0;
-        if (!Thread::current->should_ignore_signal(signal)) {
-            Thread::current->send_signal(signal, this);
-            (void)Thread::current->block<Thread::SemiPermanentBlocker>(Thread::SemiPermanentBlocker::Reason::Signal);
-        }
-        return 0;
+        return do_killself(signal);
     }
     InterruptDisabler disabler;
     auto* peer = Process::from_pid(pid);
@@ -2245,6 +2325,19 @@ int Process::sys$sleep(unsigned seconds)
 timeval kgettimeofday()
 {
     return const_cast<const timeval&>(((KernelInfoPage*)s_info_page_address_for_kernel.as_ptr())->now);
+}
+
+void compute_relative_timeout_from_absolute(const timeval& absolute_time, timeval& relative_time)
+{
+    // Convert absolute time to relative time of day.
+    timeval_sub(absolute_time, kgettimeofday(), relative_time);
+}
+
+void compute_relative_timeout_from_absolute(const timespec& absolute_time, timeval& relative_time)
+{
+    timeval tv_absolute_time;
+    timespec_to_timeval(absolute_time, tv_absolute_time);
+    compute_relative_timeout_from_absolute(tv_absolute_time, relative_time);
 }
 
 void kgettimeofday(timeval& tv)
@@ -2410,8 +2503,8 @@ KResultOr<siginfo_t> Process::do_waitid(idtype_t idtype, int id, int options)
         siginfo.si_signo = SIGCHLD;
         siginfo.si_pid = waitee_process->pid();
         siginfo.si_uid = waitee_process->uid();
-        siginfo.si_status = CLD_STOPPED;
-        siginfo.si_code = waitee_thread->m_stop_signal;
+        siginfo.si_code = CLD_STOPPED;
+        siginfo.si_status = waitee_thread->m_stop_signal;
         return siginfo;
     }
 }
@@ -2692,6 +2785,11 @@ int Process::sys$setgroups(ssize_t count, const gid_t* user_gids)
         return -EPERM;
     if (count && !validate_read(user_gids, count))
         return -EFAULT;
+
+    if (!count) {
+        m_extra_gids.clear();
+        return 0;
+    }
 
     Vector<gid_t> gids;
     gids.resize(count);
@@ -3714,7 +3812,7 @@ void Process::send_signal(u8 signal, Process* sender)
     thread->send_signal(signal, sender);
 }
 
-int Process::sys$create_thread(void* (*entry)(void*), void* argument, const Syscall::SC_create_thread_params* user_params)
+int Process::sys$create_thread(void* (*entry)(void*), const Syscall::SC_create_thread_params* user_params)
 {
     REQUIRE_PROMISE(thread);
     if (!validate_read((const void*)entry, sizeof(void*)))
@@ -3765,10 +3863,6 @@ int Process::sys$create_thread(void* (*entry)(void*), void* argument, const Sysc
     tss.eflags = 0x0202;
     tss.cr3 = page_directory().cr3();
     tss.esp = user_stack_address;
-
-    // NOTE: The stack needs to be 16-byte aligned.
-    thread->push_value_on_stack((FlatPtr)argument);
-    thread->push_value_on_stack(0);
 
     thread->make_thread_specific_region({});
     thread->set_state(Thread::State::Runnable);
@@ -4579,29 +4673,40 @@ int Process::sys$futex(const Syscall::SC_futex_params* user_params)
     if (user_timeout && !validate_read_typed(user_timeout))
         return -EFAULT;
 
-    timespec timeout { 0, 0 };
-    if (user_timeout)
-        copy_from_user(&timeout, user_timeout);
-
-    i32 user_value;
-
     switch (futex_op) {
-    case FUTEX_WAIT:
+    case FUTEX_WAIT: {
+        i32 user_value;
         copy_from_user(&user_value, userspace_address);
         if (user_value != value)
             return -EAGAIN;
+
+        timespec ts_abstimeout { 0, 0 };
+        if (user_timeout && !validate_read_and_copy_typed(&ts_abstimeout, user_timeout))
+            return -EFAULT;
+
+        WaitQueue& wait_queue = futex_queue(userspace_address);
+        timeval* optional_timeout = nullptr;
+        timeval relative_timeout { 0, 0 };
+        if (user_timeout) {
+            compute_relative_timeout_from_absolute(ts_abstimeout, relative_timeout);
+            optional_timeout = &relative_timeout;
+        }
+
         // FIXME: This is supposed to be interruptible by a signal, but right now WaitQueue cannot be interrupted.
-        // FIXME: Support timeout!
-        Thread::current->wait_on(futex_queue(userspace_address));
+        Thread::BlockResult result = Thread::current->wait_on(wait_queue, optional_timeout);
+        if (result == Thread::BlockResult::InterruptedByTimeout) {
+            return -ETIMEDOUT;
+        }
+
         break;
+    }
     case FUTEX_WAKE:
         if (value == 0)
             return 0;
         if (value == 1) {
             futex_queue(userspace_address).wake_one();
         } else {
-            // FIXME: Wake exactly (value) waiters.
-            futex_queue(userspace_address).wake_all();
+            futex_queue(userspace_address).wake_n(value);
         }
         break;
     }
@@ -4841,12 +4946,15 @@ OwnPtr<Process::ELFBundle> Process::elf_bundle() const
     if (!m_executable)
         return nullptr;
     auto bundle = make<ELFBundle>();
+    if (!m_executable->inode().shared_vmobject()) {
+        return nullptr;
+    }
     ASSERT(m_executable->inode().shared_vmobject());
     auto& vmobject = *m_executable->inode().shared_vmobject();
     bundle->region = MM.allocate_kernel_region_with_vmobject(const_cast<SharedInodeVMObject&>(vmobject), vmobject.size(), "ELF bundle", Region::Access::Read);
     if (!bundle->region)
         return nullptr;
-    bundle->elf_loader = make<ELF::Loader>(bundle->region->vaddr().as_ptr(), bundle->region->size());
+    bundle->elf_loader = ELF::Loader::create(bundle->region->vaddr().as_ptr(), bundle->region->size());
     return bundle;
 }
 
@@ -4877,82 +4985,8 @@ int Process::sys$ptrace(const Syscall::SC_ptrace_params* user_params)
     Syscall::SC_ptrace_params params;
     if (!validate_read_and_copy_typed(&params, user_params))
         return -EFAULT;
-
-    if (params.request == PT_TRACE_ME) {
-        if (Thread::current->tracer())
-            return -EBUSY;
-
-        m_wait_for_tracer_at_next_execve = true;
-        return 0;
-    }
-
-    if (params.pid == m_pid)
-        return -EINVAL;
-
-    InterruptDisabler disabler;
-    auto* peer = Thread::from_tid(params.pid);
-    if (!peer)
-        return -ESRCH;
-
-    if (peer->process().uid() != m_euid)
-        return -EACCES;
-
-    if (params.request == PT_ATTACH) {
-        if (peer->tracer()) {
-            return -EBUSY;
-        }
-        peer->start_tracing_from(m_pid);
-        if (peer->state() != Thread::State::Stopped && !(peer->m_blocker && peer->m_blocker->is_reason_signal()))
-            peer->send_signal(SIGSTOP, this);
-        return 0;
-    }
-
-    auto* tracer = peer->tracer();
-
-    if (!tracer)
-        return -EPERM;
-
-    if (tracer->tracer_pid() != m_pid)
-        return -EBUSY;
-
-    if (peer->m_state == Thread::State::Running)
-        return -EBUSY;
-
-    switch (params.request) {
-    case PT_CONTINUE:
-        peer->send_signal(SIGCONT, this);
-        break;
-
-    case PT_DETACH:
-        peer->stop_tracing();
-        peer->send_signal(SIGCONT, this);
-        break;
-
-    case PT_SYSCALL:
-        tracer->set_trace_syscalls(true);
-        peer->send_signal(SIGCONT, this);
-        break;
-
-    case PT_GETREGS: {
-        if (!tracer->has_regs())
-            return -EINVAL;
-
-        PtraceRegisters* regs = reinterpret_cast<PtraceRegisters*>(params.addr);
-        if (!validate_write(regs, sizeof(PtraceRegisters)))
-            return -EFAULT;
-
-        {
-            SmapDisabler disabler;
-            *regs = tracer->regs();
-        }
-        break;
-    }
-
-    default:
-        return -EINVAL;
-    }
-
-    return 0;
+    auto result = Ptrace::handle_syscall(params, *this);
+    return result.is_error() ? result.error() : result.value();
 }
 
 bool Process::has_tracee_thread(int tracer_pid) const
@@ -4967,6 +5001,57 @@ bool Process::has_tracee_thread(int tracer_pid) const
         return IterationDecision::Continue;
     });
     return has_tracee;
+}
+
+KResultOr<u32> Process::peek_user_data(u32* address)
+{
+    if (!MM.validate_user_read(*this, VirtualAddress(address), sizeof(u32))) {
+        dbg() << "Invalid address for peek_user_data: " << address;
+        return KResult(-EFAULT);
+    }
+    uint32_t result;
+
+    // This function can be called from the context of another
+    // process that called PT_PEEK
+    ProcessPagingScope scope(*this);
+    copy_from_user(&result, address);
+
+    return result;
+}
+
+KResult Process::poke_user_data(u32* address, u32 data)
+{
+    // We validate for read (rather than write) because PT_POKE can write to readonly pages.
+    // So we effectively only care that the poke operation is trying to write to user pages.
+    if (!MM.validate_user_read(*this, VirtualAddress(address), sizeof(u32))) {
+        dbg() << "Invalid address for poke_user_data: " << address;
+        return KResult(-EFAULT);
+    }
+    ProcessPagingScope scope(*this);
+    Range range = { VirtualAddress(address), sizeof(u32) };
+    auto* region = region_containing(range);
+    ASSERT(region != nullptr);
+    if (region->is_shared()) {
+        // If the region is shared, we change its vmobject to a PrivateInodeVMObject
+        // to prevent the write operation from chaning any shared inode data
+        ASSERT(region->vmobject().is_shared_inode());
+        region->set_vmobject(PrivateInodeVMObject::create_with_inode(static_cast<SharedInodeVMObject&>(region->vmobject()).inode()));
+        region->set_shared(false);
+    }
+    const bool was_writable = region->is_writable();
+    if (!was_writable) //TODO refactor into scopeguard
+    {
+        region->set_writable(true);
+        region->remap();
+    }
+
+    copy_to_user(address, &data);
+
+    if (!was_writable) {
+        region->set_writable(false);
+        region->remap();
+    }
+    return KResult(KSuccess);
 }
 
 }

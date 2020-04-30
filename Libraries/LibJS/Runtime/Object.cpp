@@ -34,14 +34,24 @@
 #include <LibJS/Runtime/NativeProperty.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibJS/Runtime/Shape.h>
+#include <LibJS/Runtime/StringObject.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
 
-Object::Object()
+Object* Object::create_empty(Interpreter&, GlobalObject& global_object)
 {
-    m_shape = interpreter().empty_object_shape();
-    m_shape->set_prototype_without_transition(interpreter().object_prototype());
+    return global_object.heap().allocate<Object>(global_object.object_prototype());
+}
+
+Object::Object(Object* prototype)
+{
+    if (prototype) {
+        m_shape = interpreter().global_object().empty_object_shape();
+        set_prototype(prototype);
+    } else {
+        m_shape = interpreter().heap().allocate<Shape>();
+    }
 }
 
 Object::~Object()
@@ -60,6 +70,12 @@ const Object* Object::prototype() const
 
 void Object::set_prototype(Object* new_prototype)
 {
+    if (prototype() == new_prototype)
+        return;
+    if (shape().is_unique()) {
+        shape().set_prototype_without_transition(new_prototype);
+        return;
+    }
     m_shape = m_shape->create_prototype_transition(new_prototype);
 }
 
@@ -72,7 +88,7 @@ bool Object::has_prototype(const Object* prototype) const
     return false;
 }
 
-Optional<Value> Object::get_own_property(const Object& this_object, const FlyString& property_name) const
+Value Object::get_own_property(const Object& this_object, const FlyString& property_name) const
 {
     auto metadata = shape().lookup(property_name);
     if (!metadata.has_value())
@@ -92,6 +108,69 @@ Optional<Value> Object::get_own_property(const Object& this_object, const FlyStr
     return value_here;
 }
 
+Value Object::get_enumerable_own_properties(const Object& this_object, GetOwnPropertyMode kind) const
+{
+    auto* properties_array = Array::create(interpreter().global_object());
+
+    // FIXME: Support generic iterables
+    if (this_object.is_string_object()) {
+        auto str = static_cast<const StringObject&>(this_object).primitive_string().string();
+
+        for (size_t i = 0; i < str.length(); ++i) {
+            if (kind == GetOwnPropertyMode::Key) {
+                properties_array->put_by_index(i, js_string(interpreter(), String::number(i)));
+            } else if (kind == GetOwnPropertyMode::Value) {
+                properties_array->put_by_index(i, js_string(interpreter(), String::format("%c", str[i])));
+            } else {
+                auto* entry_array = Array::create(interpreter().global_object());
+                entry_array->put_by_index(0, js_string(interpreter(), String::number(i)));
+                entry_array->put_by_index(1, js_string(interpreter(), String::format("%c", str[i])));
+                properties_array->put_by_index(i, entry_array);
+            }
+        }
+
+        return properties_array;
+    }
+
+    size_t property_index = 0;
+    for (size_t i = 0; i < m_elements.size(); ++i) {
+        if (m_elements.at(i).is_empty())
+            continue;
+
+        if (kind == GetOwnPropertyMode::Key) {
+            properties_array->put_by_index(property_index, js_string(interpreter(), String::number(i)));
+        } else if (kind == GetOwnPropertyMode::Value) {
+            properties_array->put_by_index(property_index, m_elements.at(i));
+        } else {
+            auto* entry_array = Array::create(interpreter().global_object());
+            entry_array->put_by_index(0, js_string(interpreter(), String::number(i)));
+            entry_array->put_by_index(1, m_elements.at(i));
+            properties_array->put_by_index(property_index, entry_array);
+        }
+
+        ++property_index;
+    }
+
+    for (auto& it : this_object.shape().property_table_ordered()) {
+        if (it.value.attributes & Attribute::Enumerable) {
+            size_t offset = it.value.offset + property_index;
+
+            if (kind == GetOwnPropertyMode::Key) {
+                properties_array->put_by_index(offset, js_string(interpreter(), it.key));
+            } else if (kind == GetOwnPropertyMode::Value) {
+                properties_array->put_by_index(offset, this_object.get(it.key));
+            } else {
+                auto* entry_array = Array::create(interpreter().global_object());
+                entry_array->put_by_index(0, js_string(interpreter(), it.key));
+                entry_array->put_by_index(1, this_object.get(it.key));
+                properties_array->put_by_index(offset, entry_array);
+            }
+        }
+    }
+
+    return properties_array;
+}
+
 void Object::set_shape(Shape& new_shape)
 {
     m_storage.resize(new_shape.property_count());
@@ -101,28 +180,37 @@ void Object::set_shape(Shape& new_shape)
 void Object::put_own_property(Object& this_object, const FlyString& property_name, u8 attributes, Value value, PutOwnPropertyMode mode)
 {
     auto metadata = shape().lookup(property_name);
-    if (!metadata.has_value()) {
-        auto* new_shape = m_shape->create_put_transition(property_name, attributes);
-        set_shape(*new_shape);
+    bool new_property = !metadata.has_value();
+
+    if (new_property) {
+        if (m_shape->is_unique()) {
+            m_shape->add_property_to_unique_shape(property_name, attributes);
+            m_storage.resize(m_shape->property_count());
+        } else {
+            set_shape(*m_shape->create_put_transition(property_name, attributes));
+        }
         metadata = shape().lookup(property_name);
         ASSERT(metadata.has_value());
     }
 
-    if (mode == PutOwnPropertyMode::DefineProperty && !(metadata.value().attributes & Attribute::Configurable) && attributes != metadata.value().attributes) {
+    if (!new_property && mode == PutOwnPropertyMode::DefineProperty && !(metadata.value().attributes & Attribute::Configurable) && attributes != metadata.value().attributes) {
         dbg() << "Disallow reconfig of non-configurable property";
         interpreter().throw_exception<TypeError>(String::format("Cannot redefine property '%s'", property_name.characters()));
         return;
     }
 
     if (mode == PutOwnPropertyMode::DefineProperty && attributes != metadata.value().attributes) {
-        auto* new_shape = m_shape->create_configure_transition(property_name, attributes);
-        set_shape(*new_shape);
+        if (m_shape->is_unique()) {
+            m_shape->reconfigure_property_in_unique_shape(property_name, attributes);
+        } else {
+            set_shape(*m_shape->create_configure_transition(property_name, attributes));
+        }
         metadata = shape().lookup(property_name);
 
         dbg() << "Reconfigured property " << property_name << ", new shape says offset is " << metadata.value().offset << " and my storage capacity is " << m_storage.size();
     }
 
-    if (mode == PutOwnPropertyMode::Put && !(metadata.value().attributes & Attribute::Writable)) {
+    if (!new_property && mode == PutOwnPropertyMode::Put && !(metadata.value().attributes & Attribute::Writable)) {
         dbg() << "Disallow write to non-writable property";
         return;
     }
@@ -143,7 +231,40 @@ void Object::put_own_property(Object& this_object, const FlyString& property_nam
     }
 }
 
-Optional<Value> Object::get_by_index(i32 property_index) const
+Value Object::delete_property(PropertyName property_name)
+{
+    ASSERT(property_name.is_valid());
+    if (property_name.is_number()) {
+        if (property_name.as_number() < static_cast<i32>(elements().size())) {
+            elements()[property_name.as_number()] = {};
+            return Value(true);
+        }
+        return Value(true);
+    }
+    auto metadata = shape().lookup(property_name.as_string());
+    if (!metadata.has_value())
+        return Value(true);
+    if (!(metadata.value().attributes & Attribute::Configurable))
+        return Value(false);
+
+    size_t deleted_offset = metadata.value().offset;
+
+    ensure_shape_is_unique();
+
+    shape().remove_property_from_unique_shape(property_name.as_string(), deleted_offset);
+    m_storage.remove(deleted_offset);
+    return Value(true);
+}
+
+void Object::ensure_shape_is_unique()
+{
+    if (shape().is_unique())
+        return;
+
+    m_shape = m_shape->create_unique_clone();
+}
+
+Value Object::get_by_index(i32 property_index) const
 {
     if (property_index < 0)
         return get(String::number(property_index));
@@ -161,7 +282,7 @@ Optional<Value> Object::get_by_index(i32 property_index) const
     return {};
 }
 
-Optional<Value> Object::get(const FlyString& property_name) const
+Value Object::get(const FlyString& property_name) const
 {
     bool ok;
     i32 property_index = property_name.to_int(ok);
@@ -171,38 +292,39 @@ Optional<Value> Object::get(const FlyString& property_name) const
     const Object* object = this;
     while (object) {
         auto value = object->get_own_property(*this, property_name);
-        if (value.has_value())
-            return value.value();
+        if (!value.is_empty())
+            return value;
         object = object->prototype();
     }
     return {};
 }
 
-Optional<Value> Object::get(PropertyName property_name) const
+Value Object::get(PropertyName property_name) const
 {
     if (property_name.is_number())
         return get_by_index(property_name.as_number());
     return get(property_name.as_string());
 }
 
-void Object::put_by_index(i32 property_index, Value value)
+void Object::put_by_index(i32 property_index, Value value, u8 attributes)
 {
     ASSERT(!value.is_empty());
     if (property_index < 0)
-        return put(String::number(property_index), value);
+        return put(String::number(property_index), value, attributes);
     // FIXME: Implement some kind of sparse storage for arrays with huge indices.
+    // Also: Take attributes into account here
     if (static_cast<size_t>(property_index) >= m_elements.size())
         m_elements.resize(property_index + 1);
     m_elements[property_index] = value;
 }
 
-void Object::put(const FlyString& property_name, Value value)
+void Object::put(const FlyString& property_name, Value value, u8 attributes)
 {
     ASSERT(!value.is_empty());
     bool ok;
     i32 property_index = property_name.to_int(ok);
     if (ok && property_index >= 0)
-        return put_by_index(property_index, value);
+        return put_by_index(property_index, value, attributes);
 
     // If there's a setter in the prototype chain, we go to the setter.
     // Otherwise, it goes in the own property storage.
@@ -223,26 +345,26 @@ void Object::put(const FlyString& property_name, Value value)
         }
         object = object->prototype();
     }
-    put_own_property(*this, property_name, Attribute::Configurable | Attribute::Enumerable | Attribute::Writable, value, PutOwnPropertyMode::Put);
+    put_own_property(*this, property_name, attributes, value, PutOwnPropertyMode::Put);
 }
 
-void Object::put(PropertyName property_name, Value value)
+void Object::put(PropertyName property_name, Value value, u8 attributes)
 {
     if (property_name.is_number())
-        return put_by_index(property_name.as_number(), value);
-    return put(property_name.as_string(), value);
+        return put_by_index(property_name.as_number(), value, attributes);
+    return put(property_name.as_string(), value, attributes);
 }
 
-void Object::put_native_function(const FlyString& property_name, AK::Function<Value(Interpreter&)> native_function, i32 length)
+void Object::put_native_function(const FlyString& property_name, AK::Function<Value(Interpreter&)> native_function, i32 length, u8 attributes)
 {
-    auto* function = heap().allocate<NativeFunction>(property_name, move(native_function));
-    function->put("length", Value(length));
-    put(property_name, function);
+    auto* function = NativeFunction::create(interpreter(), interpreter().global_object(), property_name, move(native_function));
+    function->put("length", Value(length), Attribute::Configurable);
+    put(property_name, function, attributes);
 }
 
-void Object::put_native_property(const FlyString& property_name, AK::Function<Value(Interpreter&)> getter, AK::Function<void(Interpreter&, Value)> setter)
+void Object::put_native_property(const FlyString& property_name, AK::Function<Value(Interpreter&)> getter, AK::Function<void(Interpreter&, Value)> setter, u8 attributes)
 {
-    put(property_name, heap().allocate<NativeProperty>(move(getter), move(setter)));
+    put(property_name, heap().allocate<NativeProperty>(move(getter), move(setter)), attributes);
 }
 
 void Object::visit_children(Cell::Visitor& visitor)
@@ -297,11 +419,17 @@ Value Object::to_primitive(PreferredType preferred_type) const
 Value Object::to_string() const
 {
     auto to_string_property = get("toString");
-    if (to_string_property.has_value()
-        && to_string_property.value().is_object()
-        && to_string_property.value().as_object().is_function()) {
-        auto& to_string_function = static_cast<Function&>(to_string_property.value().as_object());
-        return const_cast<Object*>(this)->interpreter().call(&to_string_function, const_cast<Object*>(this));
+    if (!to_string_property.is_empty()
+        && to_string_property.is_object()
+        && to_string_property.as_object().is_function()) {
+        auto& to_string_function = static_cast<Function&>(to_string_property.as_object());
+        auto& interpreter = const_cast<Object*>(this)->interpreter();
+        auto to_string_result = interpreter.call(to_string_function, const_cast<Object*>(this));
+        if (to_string_result.is_object())
+            interpreter.throw_exception<TypeError>("Cannot convert object to string");
+        if (interpreter.exception())
+            return {};
+        return js_string(heap(), to_string_result.to_string());
     }
     return js_string(heap(), String::format("[object %s]", class_name()));
 }

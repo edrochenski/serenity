@@ -1,3 +1,5 @@
+load("test-common.js");
+
 try {
     var a = [1, 2, 3];
     assert(a.toString() === '1,2,3');
@@ -5,6 +7,8 @@ try {
     assert([5].toString() === '5');
 
     assert("rgb(" + [10, 11, 12] + ")" === "rgb(10,11,12)");
+
+    assert([undefined, null].toString() === ",");
 
     a = new Array(5);
     assert(a.toString() === ",,,,");

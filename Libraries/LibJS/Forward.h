@@ -52,7 +52,9 @@
 namespace JS {
 
 class ASTNode;
+class BoundFunction;
 class Cell;
+class DeferGC;
 class Error;
 class Exception;
 class Expression;
@@ -61,10 +63,14 @@ class HandleImpl;
 class Heap;
 class HeapBlock;
 class Interpreter;
+class LexicalEnvironment;
+class MarkedValueList;
 class PrimitiveString;
+class Reference;
 class ScopeNode;
 class Shape;
 class Statement;
+class Uint8ClampedArray;
 class Value;
 enum class DeclarationKind;
 

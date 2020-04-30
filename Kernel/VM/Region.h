@@ -31,6 +31,7 @@
 #include <AK/Weakable.h>
 #include <Kernel/Heap/SlabAllocator.h>
 #include <Kernel/VM/RangeAllocator.h>
+#include <Kernel/VM/VMObject.h>
 
 namespace Kernel {
 
@@ -55,6 +56,11 @@ public:
         Execute = 4,
     };
 
+    enum class InheritMode {
+        Default,
+        ZeroedOnFork,
+    };
+
     static NonnullOwnPtr<Region> create_user_accessible(const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, const StringView& name, u8 access, bool cacheable = true);
     static NonnullOwnPtr<Region> create_kernel_only(const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, const StringView& name, u8 access, bool cacheable = true);
 
@@ -74,6 +80,7 @@ public:
 
     const VMObject& vmobject() const { return *m_vmobject; }
     VMObject& vmobject() { return *m_vmobject; }
+    void set_vmobject(NonnullRefPtr<VMObject>&& obj) { m_vmobject = obj; }
 
     bool is_shared() const { return m_shared; }
     void set_shared(bool shared) { m_shared = shared; }
@@ -121,6 +128,18 @@ public:
         return size() / PAGE_SIZE;
     }
 
+    const PhysicalPage* physical_page(size_t index) const
+    {
+        ASSERT(index < page_count());
+        return vmobject().physical_pages()[first_page_index() + index];
+    }
+
+    RefPtr<PhysicalPage>& physical_page_slot(size_t index)
+    {
+        ASSERT(index < page_count());
+        return vmobject().physical_pages()[first_page_index() + index];
+    }
+
     size_t offset_in_vmobject() const
     {
         return m_offset_in_vmobject;
@@ -160,6 +179,8 @@ public:
     // NOTE: These are public so we can make<> them.
     Region(const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, const String&, u8 access, bool cacheable);
 
+    void set_inherit_mode(InheritMode inherit_mode) { m_inherit_mode = inherit_mode; }
+
 private:
     Bitmap& ensure_cow_map() const;
 
@@ -183,6 +204,7 @@ private:
     NonnullRefPtr<VMObject> m_vmobject;
     String m_name;
     u8 m_access { 0 };
+    InheritMode m_inherit_mode : 3 { InheritMode::Default };
     bool m_shared : 1 { false };
     bool m_user_accessible : 1 { false };
     bool m_cacheable : 1 { false };

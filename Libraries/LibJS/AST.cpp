@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -33,9 +34,13 @@
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/MarkedValueList.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/PrimitiveString.h>
+#include <LibJS/Runtime/Reference.h>
 #include <LibJS/Runtime/ScriptFunction.h>
+#include <LibJS/Runtime/Shape.h>
+#include <LibJS/Runtime/StringObject.h>
 #include <LibJS/Runtime/Value.h>
 #include <stdio.h>
 
@@ -48,14 +53,14 @@ Value ScopeNode::execute(Interpreter& interpreter) const
 
 Value FunctionDeclaration::execute(Interpreter& interpreter) const
 {
-    auto* function = interpreter.heap().allocate<ScriptFunction>(name(), body(), parameters());
+    auto* function = ScriptFunction::create(interpreter.global_object(), name(), body(), parameters(), interpreter.current_environment());
     interpreter.set_variable(name(), function);
     return js_undefined();
 }
 
 Value FunctionExpression::execute(Interpreter& interpreter) const
 {
-    return interpreter.heap().allocate<ScriptFunction>(name(), body(), parameters());
+    return ScriptFunction::create(interpreter.global_object(), name(), body(), parameters(), interpreter.current_environment());
 }
 
 Value ExpressionStatement::execute(Interpreter& interpreter) const
@@ -92,21 +97,29 @@ Value CallExpression::execute(Interpreter& interpreter) const
 
     ASSERT(!callee.is_empty());
 
-    if (is_new_expression()) {
-        if (!callee.is_object()
-            || !callee.as_object().is_function()
-            || (callee.as_object().is_native_function()
-                && !static_cast<NativeFunction&>(callee.as_object()).has_constructor()))
-            return interpreter.throw_exception<TypeError>(String::format("%s is not a constructor", callee.to_string().characters()));
+    if (!callee.is_object()
+        || !callee.as_object().is_function()
+        || (is_new_expression() && (callee.as_object().is_native_function() && !static_cast<NativeFunction&>(callee.as_object()).has_constructor()))) {
+        String error_message;
+        auto call_type = is_new_expression() ? "constructor" : "function";
+        if (m_callee->is_identifier() || m_callee->is_member_expression()) {
+            String expression_string;
+            if (m_callee->is_identifier())
+                expression_string = static_cast<const Identifier&>(*m_callee).string();
+            else
+                expression_string = static_cast<const MemberExpression&>(*m_callee).to_string_approximation();
+            error_message = String::format("%s is not a %s (evaluated from '%s')", callee.to_string().characters(), call_type, expression_string.characters());
+        } else {
+            error_message = String::format("%s is not a %s", callee.to_string().characters(), call_type);
+        }
+        return interpreter.throw_exception<TypeError>(error_message);
     }
-
-    if (!callee.is_object() || !callee.as_object().is_function())
-        return interpreter.throw_exception<TypeError>(String::format("%s is not a function", callee.to_string().characters()));
 
     auto& function = static_cast<Function&>(callee.as_object());
 
-    Vector<Value> arguments;
-    arguments.ensure_capacity(m_arguments.size());
+    MarkedValueList arguments(interpreter.heap());
+    arguments.values().append(function.bound_arguments());
+
     for (size_t i = 0; i < m_arguments.size(); ++i) {
         auto value = m_arguments[i].execute(interpreter);
         if (interpreter.exception())
@@ -118,26 +131,27 @@ Value CallExpression::execute(Interpreter& interpreter) const
 
     auto& call_frame = interpreter.push_call_frame();
     call_frame.function_name = function.name();
-    call_frame.arguments = move(arguments);
+    call_frame.arguments = arguments.values();
+    call_frame.environment = function.create_environment();
 
     Object* new_object = nullptr;
     Value result;
     if (is_new_expression()) {
-        new_object = interpreter.heap().allocate<Object>();
+        new_object = Object::create_empty(interpreter, interpreter.global_object());
         auto prototype = function.get("prototype");
-        if (prototype.has_value() && prototype.value().is_object())
-            new_object->set_prototype(&prototype.value().as_object());
+        if (prototype.is_object())
+            new_object->set_prototype(&prototype.as_object());
         call_frame.this_value = new_object;
         result = function.construct(interpreter);
     } else {
-        call_frame.this_value = this_value;
+        call_frame.this_value = function.bound_this().value_or(this_value);
         result = function.call(interpreter);
     }
 
+    interpreter.pop_call_frame();
+
     if (interpreter.exception())
         return {};
-
-    interpreter.pop_call_frame();
 
     if (is_new_expression()) {
         if (result.is_object())
@@ -222,9 +236,12 @@ Value ForStatement::execute(Interpreter& interpreter) const
     }
 
     if (m_test) {
-        while (m_test->execute(interpreter).to_boolean()) {
+        while (true) {
+            auto test_result = m_test->execute(interpreter);
             if (interpreter.exception())
                 return {};
+            if (!test_result.to_boolean())
+                break;
             last_value = interpreter.run(*m_body);
             if (interpreter.exception())
                 return {};
@@ -281,45 +298,49 @@ Value BinaryExpression::execute(Interpreter& interpreter) const
 
     switch (m_op) {
     case BinaryOp::Addition:
-        return add(lhs_result, rhs_result);
+        return add(interpreter, lhs_result, rhs_result);
     case BinaryOp::Subtraction:
-        return sub(lhs_result, rhs_result);
+        return sub(interpreter, lhs_result, rhs_result);
     case BinaryOp::Multiplication:
-        return mul(lhs_result, rhs_result);
+        return mul(interpreter, lhs_result, rhs_result);
     case BinaryOp::Division:
-        return div(lhs_result, rhs_result);
+        return div(interpreter, lhs_result, rhs_result);
     case BinaryOp::Modulo:
-        return mod(lhs_result, rhs_result);
+        return mod(interpreter, lhs_result, rhs_result);
     case BinaryOp::Exponentiation:
-        return exp(lhs_result, rhs_result);
+        return exp(interpreter, lhs_result, rhs_result);
     case BinaryOp::TypedEquals:
-        return typed_eq(lhs_result, rhs_result);
+        return typed_eq(interpreter, lhs_result, rhs_result);
     case BinaryOp::TypedInequals:
-        return Value(!typed_eq(lhs_result, rhs_result).as_bool());
+        return Value(!typed_eq(interpreter, lhs_result, rhs_result).as_bool());
     case BinaryOp::AbstractEquals:
-        return eq(lhs_result, rhs_result);
+        return eq(interpreter, lhs_result, rhs_result);
     case BinaryOp::AbstractInequals:
-        return Value(!eq(lhs_result, rhs_result).as_bool());
+        return Value(!eq(interpreter, lhs_result, rhs_result).as_bool());
     case BinaryOp::GreaterThan:
-        return greater_than(lhs_result, rhs_result);
+        return greater_than(interpreter, lhs_result, rhs_result);
     case BinaryOp::GreaterThanEquals:
-        return greater_than_equals(lhs_result, rhs_result);
+        return greater_than_equals(interpreter, lhs_result, rhs_result);
     case BinaryOp::LessThan:
-        return less_than(lhs_result, rhs_result);
+        return less_than(interpreter, lhs_result, rhs_result);
     case BinaryOp::LessThanEquals:
-        return less_than_equals(lhs_result, rhs_result);
+        return less_than_equals(interpreter, lhs_result, rhs_result);
     case BinaryOp::BitwiseAnd:
-        return bitwise_and(lhs_result, rhs_result);
+        return bitwise_and(interpreter, lhs_result, rhs_result);
     case BinaryOp::BitwiseOr:
-        return bitwise_or(lhs_result, rhs_result);
+        return bitwise_or(interpreter, lhs_result, rhs_result);
     case BinaryOp::BitwiseXor:
-        return bitwise_xor(lhs_result, rhs_result);
+        return bitwise_xor(interpreter, lhs_result, rhs_result);
     case BinaryOp::LeftShift:
-        return left_shift(lhs_result, rhs_result);
+        return left_shift(interpreter, lhs_result, rhs_result);
     case BinaryOp::RightShift:
-        return right_shift(lhs_result, rhs_result);
+        return right_shift(interpreter, lhs_result, rhs_result);
+    case BinaryOp::UnsignedRightShift:
+        return unsigned_right_shift(interpreter, lhs_result, rhs_result);
+    case BinaryOp::In:
+        return in(interpreter, lhs_result, rhs_result);
     case BinaryOp::InstanceOf:
-        return instance_of(lhs_result, rhs_result);
+        return instance_of(interpreter, lhs_result, rhs_result);
     }
 
     ASSERT_NOT_REACHED();
@@ -337,39 +358,84 @@ Value LogicalExpression::execute(Interpreter& interpreter) const
             auto rhs_result = m_rhs->execute(interpreter);
             if (interpreter.exception())
                 return {};
-
-            return Value(rhs_result);
+            return rhs_result;
         }
-
-        return Value(lhs_result);
-    case LogicalOp::Or:
+        return lhs_result;
+    case LogicalOp::Or: {
         if (lhs_result.to_boolean())
-            return Value(lhs_result);
-
+            return lhs_result;
         auto rhs_result = m_rhs->execute(interpreter);
         if (interpreter.exception())
             return {};
-
-        return Value(rhs_result);
+        return rhs_result;
+    }
+    case LogicalOp::NullishCoalescing:
+        if (lhs_result.is_null() || lhs_result.is_undefined()) {
+            auto rhs_result = m_rhs->execute(interpreter);
+            if (interpreter.exception())
+                return {};
+            return rhs_result;
+        }
+        return lhs_result;
     }
 
     ASSERT_NOT_REACHED();
 }
 
+Reference Expression::to_reference(Interpreter&) const
+{
+    return {};
+}
+
+Reference Identifier::to_reference(Interpreter& interpreter) const
+{
+    return interpreter.get_reference(string());
+}
+
+Reference MemberExpression::to_reference(Interpreter& interpreter) const
+{
+    auto object_value = m_object->execute(interpreter);
+    if (object_value.is_empty())
+        return {};
+    auto* object = object_value.to_object(interpreter.heap());
+    if (!object)
+        return {};
+    auto property_name = computed_property_name(interpreter);
+    if (!property_name.is_valid())
+        return {};
+    return { object, property_name };
+}
+
 Value UnaryExpression::execute(Interpreter& interpreter) const
 {
+    if (m_op == UnaryOp::Delete) {
+        auto reference = m_lhs->to_reference(interpreter);
+        if (interpreter.exception())
+            return {};
+        if (reference.is_unresolvable())
+            return Value(true);
+        // FIXME: Support deleting locals
+        ASSERT(!reference.is_local_variable());
+        if (reference.is_global_variable())
+            return interpreter.global_object().delete_property(reference.name());
+        auto* base_object = reference.base().to_object(interpreter.heap());
+        if (!base_object)
+            return {};
+        return base_object->delete_property(reference.name());
+    }
+
     auto lhs_result = m_lhs->execute(interpreter);
     if (interpreter.exception())
         return {};
     switch (m_op) {
     case UnaryOp::BitwiseNot:
-        return bitwise_not(lhs_result);
+        return bitwise_not(interpreter, lhs_result);
     case UnaryOp::Not:
         return Value(!lhs_result.to_boolean());
     case UnaryOp::Plus:
-        return unary_plus(lhs_result);
+        return unary_plus(interpreter, lhs_result);
     case UnaryOp::Minus:
-        return unary_minus(lhs_result);
+        return unary_minus(interpreter, lhs_result);
     case UnaryOp::Typeof:
         switch (lhs_result.type()) {
         case Value::Type::Empty:
@@ -391,7 +457,13 @@ Value UnaryExpression::execute(Interpreter& interpreter) const
             return js_string(interpreter, "object");
         case Value::Type::Boolean:
             return js_string(interpreter, "boolean");
+        default:
+            ASSERT_NOT_REACHED();
         }
+    case UnaryOp::Void:
+        return js_undefined();
+    case UnaryOp::Delete:
+        ASSERT_NOT_REACHED();
     }
 
     ASSERT_NOT_REACHED();
@@ -412,8 +484,18 @@ void ASTNode::dump(int indent) const
 void ScopeNode::dump(int indent) const
 {
     ASTNode::dump(indent);
-    for (auto& child : children())
-        child.dump(indent + 1);
+    if (!m_variables.is_empty()) {
+        print_indent(indent + 1);
+        printf("(Variables)\n");
+        for (auto& variable : m_variables)
+            variable.dump(indent + 2);
+    }
+    if (!m_children.is_empty()) {
+        print_indent(indent + 1);
+        printf("(Children)\n");
+        for (auto& child : children())
+            child.dump(indent + 2);
+    }
 }
 
 void BinaryExpression::dump(int indent) const
@@ -477,6 +559,12 @@ void BinaryExpression::dump(int indent) const
     case BinaryOp::RightShift:
         op_string = ">>";
         break;
+    case BinaryOp::UnsignedRightShift:
+        op_string = ">>>";
+        break;
+    case BinaryOp::In:
+        op_string = "in";
+        break;
     case BinaryOp::InstanceOf:
         op_string = "instanceof";
         break;
@@ -499,6 +587,9 @@ void LogicalExpression::dump(int indent) const
         break;
     case LogicalOp::Or:
         op_string = "||";
+        break;
+    case LogicalOp::NullishCoalescing:
+        op_string = "??";
         break;
     }
 
@@ -528,6 +619,12 @@ void UnaryExpression::dump(int indent) const
         break;
     case UnaryOp::Typeof:
         op_string = "typeof ";
+        break;
+    case UnaryOp::Void:
+        op_string = "void ";
+        break;
+    case UnaryOp::Delete:
+        op_string = "delete ";
         break;
     }
 
@@ -578,7 +675,15 @@ void FunctionNode::dump(int indent, const char* class_name) const
 
     print_indent(indent);
     printf("%s '%s(%s)'\n", class_name, name().characters(), parameters_builder.build().characters());
-    body().dump(indent + 1);
+    if (!m_variables.is_empty()) {
+        print_indent(indent + 1);
+        printf("(Variables)\n");
+    }
+    for (auto& variable : m_variables)
+        variable.dump(indent + 2);
+    print_indent(indent + 1);
+    printf("(Body)\n");
+    body().dump(indent + 2);
 }
 
 void FunctionDeclaration::dump(int indent) const
@@ -650,16 +755,37 @@ void ForStatement::dump(int indent) const
 
 Value Identifier::execute(Interpreter& interpreter) const
 {
-    auto variable = interpreter.get_variable(string());
-    if (!variable.has_value())
+    auto value = interpreter.get_variable(string());
+    if (value.is_empty())
         return interpreter.throw_exception<ReferenceError>(String::format("'%s' not known", string().characters()));
-    return variable.value();
+    return value;
 }
 
 void Identifier::dump(int indent) const
 {
     print_indent(indent);
     printf("Identifier \"%s\"\n", m_string.characters());
+}
+
+void SpreadExpression::dump(int indent) const
+{
+    ASTNode::dump(indent);
+    m_target->dump(indent + 1);
+}
+
+Value SpreadExpression::execute(Interpreter& interpreter) const
+{
+    return m_target->execute(interpreter);
+}
+
+Value ThisExpression::execute(Interpreter& interpreter) const
+{
+    return interpreter.this_value();
+}
+
+void ThisExpression::dump(int indent) const
+{
+    ASTNode::dump(indent);
 }
 
 Value AssignmentExpression::execute(Interpreter& interpreter) const
@@ -676,57 +802,72 @@ Value AssignmentExpression::execute(Interpreter& interpreter) const
         lhs_result = m_lhs->execute(interpreter);
         if (interpreter.exception())
             return {};
-        rhs_result = add(lhs_result, rhs_result);
+        rhs_result = add(interpreter, lhs_result, rhs_result);
         break;
     case AssignmentOp::SubtractionAssignment:
         lhs_result = m_lhs->execute(interpreter);
         if (interpreter.exception())
             return {};
-        rhs_result = sub(lhs_result, rhs_result);
+        rhs_result = sub(interpreter, lhs_result, rhs_result);
         break;
     case AssignmentOp::MultiplicationAssignment:
         lhs_result = m_lhs->execute(interpreter);
         if (interpreter.exception())
             return {};
-        rhs_result = mul(lhs_result, rhs_result);
+        rhs_result = mul(interpreter, lhs_result, rhs_result);
         break;
     case AssignmentOp::DivisionAssignment:
         lhs_result = m_lhs->execute(interpreter);
         if (interpreter.exception())
             return {};
-        rhs_result = div(lhs_result, rhs_result);
+        rhs_result = div(interpreter, lhs_result, rhs_result);
+        break;
+    case AssignmentOp::LeftShiftAssignment:
+        lhs_result = m_lhs->execute(interpreter);
+        if (interpreter.exception())
+            return {};
+        rhs_result = left_shift(interpreter, lhs_result, rhs_result);
+        break;
+    case AssignmentOp::RightShiftAssignment:
+        lhs_result = m_lhs->execute(interpreter);
+        if (interpreter.exception())
+            return {};
+        rhs_result = right_shift(interpreter, lhs_result, rhs_result);
+        break;
+    case AssignmentOp::UnsignedRightShiftAssignment:
+        lhs_result = m_lhs->execute(interpreter);
+        if (interpreter.exception())
+            return {};
+        rhs_result = unsigned_right_shift(interpreter, lhs_result, rhs_result);
         break;
     }
     if (interpreter.exception())
         return {};
 
-    if (m_lhs->is_identifier()) {
-        auto name = static_cast<const Identifier&>(*m_lhs).string();
-        interpreter.set_variable(name, rhs_result);
-    } else if (m_lhs->is_member_expression()) {
-        auto object_value = static_cast<const MemberExpression&>(*m_lhs).object().execute(interpreter);
-        if (interpreter.exception())
-            return {};
-        if (auto* object = object_value.to_object(interpreter.heap())) {
-            auto property_name = static_cast<const MemberExpression&>(*m_lhs).computed_property_name(interpreter);
-            object->put(property_name, rhs_result);
-        }
-    } else {
-        return interpreter.throw_exception<ReferenceError>("Invalid left-hand side in assignment");
-    }
+    auto reference = m_lhs->to_reference(interpreter);
+    if (interpreter.exception())
+        return {};
 
+    if (reference.is_unresolvable())
+        return interpreter.throw_exception<ReferenceError>("Invalid left-hand side in assignment");
+
+    reference.put(interpreter, rhs_result);
+
+    if (interpreter.exception())
+        return {};
     return rhs_result;
 }
 
 Value UpdateExpression::execute(Interpreter& interpreter) const
 {
-    ASSERT(m_argument->is_identifier());
-    auto name = static_cast<const Identifier&>(*m_argument).string();
+    auto reference = m_argument->to_reference(interpreter);
+    if (interpreter.exception())
+        return {};
 
-    auto previous_variable = interpreter.get_variable(name);
-    ASSERT(previous_variable.has_value());
-    auto previous_value = previous_variable.value();
-    ASSERT(previous_value.is_number());
+    auto old_value = reference.get(interpreter);
+    if (interpreter.exception())
+        return {};
+    old_value = old_value.to_number();
 
     int op_result = 0;
     switch (m_op) {
@@ -736,14 +877,15 @@ Value UpdateExpression::execute(Interpreter& interpreter) const
     case UpdateOp::Decrement:
         op_result = -1;
         break;
+    default:
+        ASSERT_NOT_REACHED();
     }
 
-    interpreter.set_variable(name, Value(previous_value.as_double() + op_result));
-
-    if (m_prefixed)
-        return JS::Value(previous_value.as_double() + op_result);
-
-    return previous_value;
+    auto new_value = Value(old_value.as_double() + op_result);
+    reference.put(interpreter, new_value);
+    if (interpreter.exception())
+        return {};
+    return m_prefixed ? new_value : old_value;
 }
 
 void AssignmentExpression::dump(int indent) const
@@ -764,6 +906,15 @@ void AssignmentExpression::dump(int indent) const
         break;
     case AssignmentOp::DivisionAssignment:
         op_string = "/=";
+        break;
+    case AssignmentOp::LeftShiftAssignment:
+        op_string = "<<=";
+        break;
+    case AssignmentOp::RightShiftAssignment:
+        op_string = ">>=";
+        break;
+    case AssignmentOp::UnsignedRightShiftAssignment:
+        op_string = ">>>=";
         break;
     }
 
@@ -800,7 +951,6 @@ void UpdateExpression::dump(int indent) const
 Value VariableDeclaration::execute(Interpreter& interpreter) const
 {
     for (auto& declarator : m_declarations) {
-        interpreter.declare_variable(declarator.id().string(), m_declaration_kind);
         if (auto* init = declarator.init()) {
             auto initalizer_result = init->execute(interpreter);
             if (interpreter.exception())
@@ -848,13 +998,18 @@ void VariableDeclarator::dump(int indent) const
         m_init->dump(indent + 1);
 }
 
+void ObjectProperty::dump(int indent) const
+{
+    ASTNode::dump(indent);
+    m_key->dump(indent + 1);
+    m_value->dump(indent + 1);
+}
+
 void ObjectExpression::dump(int indent) const
 {
     ASTNode::dump(indent);
-    for (auto it : m_properties) {
-        print_indent(indent + 1);
-        printf("%s: ", it.key.characters());
-        it.value->dump(0);
+    for (auto& property : m_properties) {
+        property.dump(indent + 1);
     }
 }
 
@@ -864,14 +1019,53 @@ void ExpressionStatement::dump(int indent) const
     m_expression->dump(indent + 1);
 }
 
+Value ObjectProperty::execute(Interpreter&) const
+{
+    // NOTE: ObjectProperty execution is handled by ObjectExpression.
+    ASSERT_NOT_REACHED();
+}
+
 Value ObjectExpression::execute(Interpreter& interpreter) const
 {
-    auto object = interpreter.heap().allocate<Object>();
-    for (auto it : m_properties) {
-        auto value = it.value->execute(interpreter);
+    auto* object = Object::create_empty(interpreter, interpreter.global_object());
+    for (auto& property : m_properties) {
+        auto key_result = property.key().execute(interpreter);
         if (interpreter.exception())
             return {};
-        object->put(it.key, value);
+
+        if (property.is_spread()) {
+            if (key_result.is_array()) {
+                auto& array_to_spread = static_cast<Array&>(key_result.as_object());
+                auto& elements = array_to_spread.elements();
+
+                for (size_t i = 0; i < elements.size(); ++i) {
+                    auto element = elements.at(i);
+                    if (!element.is_empty())
+                        object->put_by_index(i, element);
+                }
+            } else if (key_result.is_object()) {
+                auto& obj_to_spread = key_result.as_object();
+
+                for (auto& it : obj_to_spread.shape().property_table_ordered()) {
+                    if (it.value.attributes & Attribute::Enumerable)
+                        object->put(it.key, obj_to_spread.get(it.key));
+                }
+            } else if (key_result.is_string()) {
+                auto& str_to_spread = key_result.as_string().string();
+
+                for (size_t i = 0; i < str_to_spread.length(); i++) {
+                    object->put_by_index(i, js_string(interpreter, str_to_spread.substring(i, 1)));
+                }
+            }
+
+            continue;
+        }
+
+        auto key = key_result.to_string();
+        auto value = property.value().execute(interpreter);
+        if (interpreter.exception())
+            return {};
+        object->put(key, value);
     }
     return object;
 }
@@ -900,6 +1094,17 @@ PropertyName MemberExpression::computed_property_name(Interpreter& interpreter) 
     return PropertyName(index.to_string());
 }
 
+String MemberExpression::to_string_approximation() const
+{
+    String object_string = "<object>";
+    if (m_object->is_identifier())
+        object_string = static_cast<const Identifier&>(*m_object).string();
+    if (is_computed())
+        return String::format("%s[<computed>]", object_string.characters());
+    ASSERT(m_property->is_identifier());
+    return String::format("%s.%s", object_string.characters(), static_cast<const Identifier&>(*m_property).string().characters());
+}
+
 Value MemberExpression::execute(Interpreter& interpreter) const
 {
     auto object_value = m_object->execute(interpreter);
@@ -908,11 +1113,7 @@ Value MemberExpression::execute(Interpreter& interpreter) const
     auto* object_result = object_value.to_object(interpreter.heap());
     if (interpreter.exception())
         return {};
-    auto result = object_result->get(computed_property_name(interpreter));
-    if (result.has_value()) {
-        ASSERT(!result.value().is_empty());
-    }
-    return result.value_or(js_undefined());
+    return object_result->get(computed_property_name(interpreter)).value_or(js_undefined());
 }
 
 Value StringLiteral::execute(Interpreter& interpreter) const
@@ -939,18 +1140,54 @@ void ArrayExpression::dump(int indent) const
 {
     ASTNode::dump(indent);
     for (auto& element : m_elements) {
-        element.dump(indent + 1);
+        if (element) {
+            element->dump(indent + 1);
+        } else {
+            print_indent(indent + 1);
+            printf("<empty>\n");
+        }
     }
 }
 
 Value ArrayExpression::execute(Interpreter& interpreter) const
 {
-    auto* array = interpreter.heap().allocate<Array>();
+    auto* array = Array::create(interpreter.global_object());
     for (auto& element : m_elements) {
-        auto value = element.execute(interpreter);
-        if (interpreter.exception())
-            return {};
-        array->push(value);
+        auto value = Value();
+        if (element) {
+            value = element->execute(interpreter);
+
+            if (interpreter.exception())
+                return {};
+
+            if (element->is_spread_expression()) {
+                // FIXME: Support arbitrary iterables
+                if (value.is_array()) {
+                    auto& array_to_spread = static_cast<Array&>(value.as_object());
+                    for (auto& it : array_to_spread.elements()) {
+                        if (it.is_empty()) {
+                            array->elements().append(js_undefined());
+                        } else {
+                            array->elements().append(it);
+                        }
+                    }
+                    continue;
+                }
+                if (value.is_string() || (value.is_object() && value.as_object().is_string_object())) {
+                    String string_to_spread;
+                    if (value.is_string())
+                        string_to_spread = value.as_string().string();
+                    else
+                        string_to_spread = static_cast<const StringObject&>(value.as_object()).primitive_string().string();
+                    for (size_t i = 0; i < string_to_spread.length(); ++i)
+                        array->elements().append(js_string(interpreter, string_to_spread.substring(i, 1)));
+                    continue;
+                }
+                interpreter.throw_exception<TypeError>(String::format("%s is not iterable", value.to_string().characters()));
+                return {};
+            }
+        }
+        array->elements().append(value);
     }
     return array;
 }
@@ -1036,7 +1273,7 @@ Value SwitchStatement::execute(Interpreter& interpreter) const
             auto test_result = switch_case.test()->execute(interpreter);
             if (interpreter.exception())
                 return {};
-            if (!eq(discriminant_result, test_result).to_boolean())
+            if (!eq(interpreter, discriminant_result, test_result).to_boolean())
                 continue;
         }
         falling_through = true;
@@ -1129,10 +1366,10 @@ void ConditionalExpression::dump(int indent) const
     m_test->dump(indent + 1);
     print_indent(indent);
     printf("(Consequent)\n");
-    m_test->dump(indent + 1);
+    m_consequent->dump(indent + 1);
     print_indent(indent);
     printf("(Alternate)\n");
-    m_test->dump(indent + 1);
+    m_alternate->dump(indent + 1);
 }
 
 void SequenceExpression::dump(int indent) const
@@ -1151,6 +1388,11 @@ Value SequenceExpression::execute(Interpreter& interpreter) const
             return {};
     }
     return last_value;
+}
+
+void ScopeNode::add_variables(NonnullRefPtrVector<VariableDeclaration> variables)
+{
+    m_variables.append(move(variables));
 }
 
 }

@@ -63,6 +63,7 @@ namespace Kernel {
     __ENUMERATE_SYSCALL(getcwd)               \
     __ENUMERATE_SYSCALL(gettimeofday)         \
     __ENUMERATE_SYSCALL(gethostname)          \
+    __ENUMERATE_SYSCALL(sethostname)          \
     __ENUMERATE_SYSCALL(chdir)                \
     __ENUMERATE_SYSCALL(uname)                \
     __ENUMERATE_SYSCALL(set_mmap_name)        \
@@ -182,7 +183,8 @@ namespace Kernel {
     __ENUMERATE_SYSCALL(perf_event)           \
     __ENUMERATE_SYSCALL(shutdown)             \
     __ENUMERATE_SYSCALL(get_stack_bounds)     \
-    __ENUMERATE_SYSCALL(ptrace)
+    __ENUMERATE_SYSCALL(ptrace)               \
+    __ENUMERATE_SYSCALL(minherit)
 
 namespace Syscall {
 
@@ -429,6 +431,11 @@ struct SC_ptrace_params {
     pid_t pid;
     u8* addr;
     int data;
+};
+
+struct SC_ptrace_peek_params {
+    u32* address;
+    u32* out_data;
 };
 
 void initialize();

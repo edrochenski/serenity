@@ -69,8 +69,13 @@ String Value::to_string() const
         return String::format("%.4f", as_double());
     }
 
-    if (is_object())
-        return as_object().to_primitive(Object::PreferredType::String).to_string();
+    if (is_object()) {
+        auto primitive_value = as_object().to_primitive(Object::PreferredType::String);
+        // FIXME: Maybe we should pass in the Interpreter& and call interpreter.exception() instead?
+        if (primitive_value.is_empty())
+            return {};
+        return primitive_value.to_string();
+    }
 
     if (is_string())
         return m_value.as_string->string();
@@ -92,12 +97,19 @@ bool Value::to_boolean() const
     case Type::Undefined:
         return false;
     case Type::String:
-        return !as_string()->string().is_empty();
+        return !as_string().string().is_empty();
     case Type::Object:
         return true;
     default:
         ASSERT_NOT_REACHED();
     }
+}
+
+Value Value::to_primitive(Interpreter&) const
+{
+    if (is_object())
+        return as_object().to_primitive();
+    return *this;
 }
 
 Object* Value::to_object(Heap& heap) const
@@ -106,13 +118,13 @@ Object* Value::to_object(Heap& heap) const
         return &const_cast<Object&>(as_object());
 
     if (is_string())
-        return heap.allocate<StringObject>(m_value.as_string);
+        return StringObject::create(heap.interpreter().global_object(), *m_value.as_string);
 
     if (is_number())
-        return heap.allocate<NumberObject>(m_value.as_double);
+        return NumberObject::create(heap.interpreter().global_object(), m_value.as_double);
 
     if (is_boolean())
-        return heap.allocate<BooleanObject>(m_value.as_bool);
+        return BooleanObject::create(heap.interpreter().global_object(), m_value.as_bool);
 
     if (is_null() || is_undefined()) {
         heap.interpreter().throw_exception<TypeError>("ToObject on null or undefined.");
@@ -137,7 +149,7 @@ Value Value::to_number() const
         return Value(0);
     case Type::String: {
         // FIXME: Trim whitespace beforehand
-        auto& string = as_string()->string();
+        auto& string = as_string().string();
         if (string.is_empty())
             return Value(0);
         if (string == "Infinity" || string == "+Infinity")
@@ -155,16 +167,7 @@ Value Value::to_number() const
     case Type::Undefined:
         return js_nan();
     case Type::Object:
-        if (m_value.as_object->is_array()) {
-            auto& array = *static_cast<Array*>(m_value.as_object);
-            if (array.length() == 0)
-                return Value(0);
-            if (array.length() > 1)
-                return js_nan();
-            return array.elements()[0].to_number();
-        } else {
-            return m_value.as_object->to_primitive(Object::PreferredType::Number).to_number();
-        }
+        return m_value.as_object->to_primitive(Object::PreferredType::Number).to_number();
     }
 
     ASSERT_NOT_REACHED();
@@ -180,32 +183,32 @@ double Value::to_double() const
     return to_number().as_double();
 }
 
-Value greater_than(Value lhs, Value rhs)
+Value greater_than(Interpreter&, Value lhs, Value rhs)
 {
     return Value(lhs.to_number().as_double() > rhs.to_number().as_double());
 }
 
-Value greater_than_equals(Value lhs, Value rhs)
+Value greater_than_equals(Interpreter&, Value lhs, Value rhs)
 {
     return Value(lhs.to_number().as_double() >= rhs.to_number().as_double());
 }
 
-Value less_than(Value lhs, Value rhs)
+Value less_than(Interpreter&, Value lhs, Value rhs)
 {
     return Value(lhs.to_number().as_double() < rhs.to_number().as_double());
 }
 
-Value less_than_equals(Value lhs, Value rhs)
+Value less_than_equals(Interpreter&, Value lhs, Value rhs)
 {
     return Value(lhs.to_number().as_double() <= rhs.to_number().as_double());
 }
 
-Value bitwise_and(Value lhs, Value rhs)
+Value bitwise_and(Interpreter&, Value lhs, Value rhs)
 {
     return Value((i32)lhs.to_number().as_double() & (i32)rhs.to_number().as_double());
 }
 
-Value bitwise_or(Value lhs, Value rhs)
+Value bitwise_or(Interpreter&, Value lhs, Value rhs)
 {
     bool lhs_invalid = lhs.is_undefined() || lhs.is_null() || lhs.is_nan() || lhs.is_infinity();
     bool rhs_invalid = rhs.is_undefined() || rhs.is_null() || rhs.is_nan() || rhs.is_infinity();
@@ -222,62 +225,88 @@ Value bitwise_or(Value lhs, Value rhs)
     return Value((i32)lhs.to_number().as_double() | (i32)rhs.to_number().as_double());
 }
 
-Value bitwise_xor(Value lhs, Value rhs)
+Value bitwise_xor(Interpreter&, Value lhs, Value rhs)
 {
     return Value((i32)lhs.to_number().as_double() ^ (i32)rhs.to_number().as_double());
 }
 
-Value bitwise_not(Value lhs)
+Value bitwise_not(Interpreter&, Value lhs)
 {
     return Value(~(i32)lhs.to_number().as_double());
 }
 
-Value unary_plus(Value lhs)
+Value unary_plus(Interpreter&, Value lhs)
 {
     return lhs.to_number();
 }
 
-Value unary_minus(Value lhs)
+Value unary_minus(Interpreter&, Value lhs)
 {
     if (lhs.to_number().is_nan())
         return js_nan();
     return Value(-lhs.to_number().as_double());
 }
 
-Value left_shift(Value lhs, Value rhs)
+Value left_shift(Interpreter&, Value lhs, Value rhs)
 {
-    return Value((i32)lhs.to_number().as_double() << (i32)rhs.to_number().as_double());
+    auto lhs_number = lhs.to_number();
+    if (!lhs_number.is_finite_number())
+        return Value(0);
+    auto rhs_number = rhs.to_number();
+    if (!rhs_number.is_finite_number())
+        return lhs_number;
+    return Value((i32)lhs_number.as_double() << (i32)rhs_number.as_double());
 }
 
-Value right_shift(Value lhs, Value rhs)
+Value right_shift(Interpreter&, Value lhs, Value rhs)
 {
-    return Value((i32)lhs.to_number().as_double() >> (i32)rhs.to_number().as_double());
+    auto lhs_number = lhs.to_number();
+    if (!lhs_number.is_finite_number())
+        return Value(0);
+    auto rhs_number = rhs.to_number();
+    if (!rhs_number.is_finite_number())
+        return lhs_number;
+    return Value((i32)lhs_number.as_double() >> (i32)rhs_number.as_double());
 }
 
-Value add(Value lhs, Value rhs)
+Value unsigned_right_shift(Interpreter&, Value lhs, Value rhs)
 {
-    if (lhs.is_string() || rhs.is_string())
-        return js_string((lhs.is_string() ? lhs : rhs).as_string()->heap(), String::format("%s%s", lhs.to_string().characters(), rhs.to_string().characters()));
-
-    return Value(lhs.to_number().as_double() + rhs.to_number().as_double());
+    auto lhs_number = lhs.to_number();
+    if (!lhs_number.is_finite_number())
+        return Value(0);
+    auto rhs_number = rhs.to_number();
+    if (!rhs_number.is_finite_number())
+        return lhs_number;
+    return Value((unsigned)lhs_number.as_double() >> (i32)rhs_number.as_double());
 }
 
-Value sub(Value lhs, Value rhs)
+Value add(Interpreter& interpreter, Value lhs, Value rhs)
+{
+    auto lhs_primitive = lhs.to_primitive(interpreter);
+    auto rhs_primitive = rhs.to_primitive(interpreter);
+
+    if (lhs_primitive.is_string() || rhs_primitive.is_string())
+        return js_string(interpreter.heap(), String::format("%s%s", lhs_primitive.to_string().characters(), rhs_primitive.to_string().characters()));
+
+    return Value(lhs_primitive.to_number().as_double() + rhs_primitive.to_number().as_double());
+}
+
+Value sub(Interpreter&, Value lhs, Value rhs)
 {
     return Value(lhs.to_number().as_double() - rhs.to_number().as_double());
 }
 
-Value mul(Value lhs, Value rhs)
+Value mul(Interpreter&, Value lhs, Value rhs)
 {
     return Value(lhs.to_number().as_double() * rhs.to_number().as_double());
 }
 
-Value div(Value lhs, Value rhs)
+Value div(Interpreter&, Value lhs, Value rhs)
 {
     return Value(lhs.to_number().as_double() / rhs.to_number().as_double());
 }
 
-Value mod(Value lhs, Value rhs)
+Value mod(Interpreter&, Value lhs, Value rhs)
 {
     if (lhs.to_number().is_nan() || rhs.to_number().is_nan())
         return js_nan();
@@ -289,12 +318,12 @@ Value mod(Value lhs, Value rhs)
     return Value(index - trunc * period);
 }
 
-Value exp(Value lhs, Value rhs)
+Value exp(Interpreter&, Value lhs, Value rhs)
 {
     return Value(pow(lhs.to_number().as_double(), rhs.to_number().as_double()));
 }
 
-Value typed_eq(Value lhs, Value rhs)
+Value typed_eq(Interpreter&, Value lhs, Value rhs)
 {
     if (rhs.type() != lhs.type())
         return Value(false);
@@ -310,7 +339,7 @@ Value typed_eq(Value lhs, Value rhs)
     case Value::Type::Number:
         return Value(lhs.as_double() == rhs.as_double());
     case Value::Type::String:
-        return Value(lhs.as_string()->string() == rhs.as_string()->string());
+        return Value(lhs.as_string().string() == rhs.as_string().string());
     case Value::Type::Boolean:
         return Value(lhs.as_bool() == rhs.as_bool());
     case Value::Type::Object:
@@ -320,25 +349,25 @@ Value typed_eq(Value lhs, Value rhs)
     ASSERT_NOT_REACHED();
 }
 
-Value eq(Value lhs, Value rhs)
+Value eq(Interpreter& interpreter, Value lhs, Value rhs)
 {
     if (lhs.type() == rhs.type())
-        return typed_eq(lhs, rhs);
+        return typed_eq(interpreter, lhs, rhs);
 
     if ((lhs.is_undefined() || lhs.is_null()) && (rhs.is_undefined() || rhs.is_null()))
         return Value(true);
 
     if (lhs.is_object() && rhs.is_boolean())
-        return eq(lhs.as_object().to_primitive(), rhs.to_number());
+        return eq(interpreter, lhs.as_object().to_primitive(), rhs.to_number());
 
     if (lhs.is_boolean() && rhs.is_object())
-        return eq(lhs.to_number(), rhs.as_object().to_primitive());
+        return eq(interpreter, lhs.to_number(), rhs.as_object().to_primitive());
 
     if (lhs.is_object())
-        return eq(lhs.as_object().to_primitive(), rhs);
+        return eq(interpreter, lhs.as_object().to_primitive(), rhs);
 
     if (rhs.is_object())
-        return eq(lhs, rhs.as_object().to_primitive());
+        return eq(interpreter, lhs, rhs.as_object().to_primitive());
 
     if (lhs.is_number() || rhs.is_number())
         return Value(lhs.to_number().as_double() == rhs.to_number().as_double());
@@ -349,16 +378,24 @@ Value eq(Value lhs, Value rhs)
     return Value(false);
 }
 
-Value instance_of(Value lhs, Value rhs)
+Value in(Interpreter& interpreter, Value lhs, Value rhs)
+{
+    if (!rhs.is_object())
+        return interpreter.throw_exception<TypeError>("'in' operator must be used on object");
+
+    return Value(!rhs.as_object().get(lhs.to_string()).is_empty());
+}
+
+Value instance_of(Interpreter&, Value lhs, Value rhs)
 {
     if (!lhs.is_object() || !rhs.is_object())
         return Value(false);
 
     auto constructor_prototype_property = rhs.as_object().get("prototype");
-    if (!constructor_prototype_property.has_value() || !constructor_prototype_property.value().is_object())
+    if (!constructor_prototype_property.is_object())
         return Value(false);
 
-    return Value(lhs.as_object().has_prototype(&constructor_prototype_property.value().as_object()));
+    return Value(lhs.as_object().has_prototype(&constructor_prototype_property.as_object()));
 }
 
 const LogStream& operator<<(const LogStream& stream, const Value& value)

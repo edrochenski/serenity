@@ -25,12 +25,15 @@
  */
 
 #include <AK/FlyString.h>
+#include <LibJS/Interpreter.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibWeb/Bindings/NavigatorObject.h>
 
 namespace Web {
 namespace Bindings {
 
 NavigatorObject::NavigatorObject()
+    : Object(interpreter().global_object().object_prototype())
 {
     put("appCodeName", js_string(heap(), "Mozilla"));
     put("appName", js_string(heap(), "Netscape"));

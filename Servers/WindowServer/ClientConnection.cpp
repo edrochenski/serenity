@@ -50,6 +50,15 @@ namespace WindowServer {
 
 HashMap<int, NonnullRefPtr<ClientConnection>>* s_connections;
 
+static Gfx::Rect normalize_window_rect(Gfx::Rect rect, WindowType window_type)
+{
+    auto min_size = 1;
+    if (window_type == WindowType::Normal)
+        min_size = 50;
+    Gfx::Rect normalized_rect = { rect.x(), rect.y(), max(rect.width(), min_size), max(rect.height(), min_size) };
+    return normalized_rect;
+}
+
 void ClientConnection::for_each_client(Function<void(ClientConnection&)> callback)
 {
     if (!s_connections)
@@ -79,6 +88,9 @@ ClientConnection::ClientConnection(Core::LocalSocket& client_socket, int client_
 
 ClientConnection::~ClientConnection()
 {
+    if (m_has_display_link)
+        Compositor::the().decrement_display_link_count({});
+
     MenuManager::the().close_all_menus_from_client({}, *this);
     auto windows = move(m_windows);
     for (auto& window : windows) {
@@ -314,7 +326,7 @@ void ClientConnection::handle(const Messages::WindowServer::AsyncSetWallpaper& m
 
 OwnPtr<Messages::WindowServer::SetBackgroundColorResponse> ClientConnection::handle(const Messages::WindowServer::SetBackgroundColor& message)
 {
-    Compositor::the().set_backgound_color(message.background_color());
+    Compositor::the().set_background_color(message.background_color());
     return make<Messages::WindowServer::SetBackgroundColorResponse>();
 }
 
@@ -388,9 +400,10 @@ OwnPtr<Messages::WindowServer::SetWindowRectResponse> ClientConnection::handle(c
         dbg() << "ClientConnection: Ignoring SetWindowRect request for fullscreen window";
         return nullptr;
     }
-    window.set_rect(message.rect());
-    window.request_update(message.rect());
-    return make<Messages::WindowServer::SetWindowRectResponse>();
+    auto normalized_rect = normalize_window_rect(message.rect(), window.type());
+    window.set_rect(normalized_rect);
+    window.request_update(normalized_rect);
+    return make<Messages::WindowServer::SetWindowRectResponse>(normalized_rect);
 }
 
 OwnPtr<Messages::WindowServer::GetWindowRectResponse> ClientConnection::handle(const Messages::WindowServer::GetWindowRect& message)
@@ -444,8 +457,14 @@ OwnPtr<Messages::WindowServer::CreateWindowResponse> ClientConnection::handle(co
     auto window = Window::construct(*this, (WindowType)message.type(), window_id, message.modal(), message.minimizable(), message.resizable(), message.fullscreen());
     window->set_has_alpha_channel(message.has_alpha_channel());
     window->set_title(message.title());
-    if (!message.fullscreen())
-        window->set_rect(message.rect());
+    if (!message.fullscreen()) {
+        auto normalized_rect = normalize_window_rect(message.rect(), window->type());
+        window->set_rect(normalized_rect);
+    }
+    if (window->type() == WindowType::Desktop) {
+        window->set_rect(WindowManager::the().desktop_rect());
+        window->recalculate_rect();
+    }
     window->set_show_titlebar(message.show_titlebar());
     window->set_opacity(message.opacity());
     window->set_size_increment(message.size_increment());
@@ -714,6 +733,13 @@ OwnPtr<Messages::WindowServer::SetSystemThemeResponse> ClientConnection::handle(
     return make<Messages::WindowServer::SetSystemThemeResponse>(success);
 }
 
+OwnPtr<Messages::WindowServer::GetSystemThemeResponse> ClientConnection::handle(const Messages::WindowServer::GetSystemTheme&)
+{
+    auto wm_config = Core::ConfigFile::open("/etc/WindowServer/WindowServer.ini");
+    auto name = wm_config->read_entry("Theme", "Name");
+    return make<Messages::WindowServer::GetSystemThemeResponse>(name);
+}
+
 void ClientConnection::boost()
 {
     // FIXME: Re-enable this when we have a solution for boosting.
@@ -749,12 +775,18 @@ OwnPtr<Messages::WindowServer::SetWindowBaseSizeAndSizeIncrementResponse> Client
 
 void ClientConnection::handle(const Messages::WindowServer::EnableDisplayLink&)
 {
+    if (m_has_display_link)
+        return;
     m_has_display_link = true;
+    Compositor::the().increment_display_link_count({});
 }
 
 void ClientConnection::handle(const Messages::WindowServer::DisableDisplayLink&)
 {
+    if (!m_has_display_link)
+        return;
     m_has_display_link = false;
+    Compositor::the().decrement_display_link_count({});
 }
 
 void ClientConnection::notify_display_link(Badge<Compositor>)

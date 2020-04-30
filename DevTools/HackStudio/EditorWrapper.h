@@ -26,6 +26,9 @@
 
 #pragma once
 
+#include "BreakpointCallback.h"
+#include <AK/Function.h>
+#include <AK/Vector.h>
 #include <LibGUI/Widget.h>
 #include <string.h>
 
@@ -40,11 +43,12 @@ public:
     const Editor& editor() const { return *m_editor; }
 
     GUI::Label& filename_label() { return *m_filename_label; }
+    const GUI::Label& filename_label() const { return *m_filename_label; }
 
     void set_editor_has_focus(Badge<Editor>, bool);
 
 private:
-    explicit EditorWrapper();
+    explicit EditorWrapper(BreakpointChangeCallback);
 
     RefPtr<GUI::Label> m_filename_label;
     RefPtr<GUI::Label> m_cursor_label;

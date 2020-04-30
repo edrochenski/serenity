@@ -84,7 +84,7 @@ void QSWidget::navigate(Directions direction)
         Core::DirIterator iterator(current_dir, Core::DirIterator::Flags::SkipDots);
         while (iterator.has_next()) {
             String file = iterator.next_full_path();
-            if (!file.ends_with(".png")) // TODO: Find a batter way to filter supported images.
+            if (!file.ends_with(".png") && !file.ends_with(".gif")) // TODO: Find a batter way to filter supported images.
                 continue;
             m_files_in_same_dir.append(file);
         }
@@ -162,10 +162,13 @@ void QSWidget::resize_event(GUI::ResizeEvent& event)
 
 void QSWidget::paint_event(GUI::PaintEvent& event)
 {
+    Frame::paint_event(event);
+
     GUI::Painter painter(*this);
     painter.add_clip_rect(event.rect());
+    painter.add_clip_rect(frame_inner_rect());
 
-    painter.fill_rect_with_checkerboard(rect(), { 8, 8 }, palette().base().darkened(0.9), palette().base());
+    painter.fill_rect_with_checkerboard(frame_inner_rect(), { 8, 8 }, palette().base().darkened(0.9), palette().base());
 
     if (!m_bitmap.is_null())
         painter.draw_scaled_bitmap(m_bitmap_rect, *m_bitmap, m_bitmap->rect());

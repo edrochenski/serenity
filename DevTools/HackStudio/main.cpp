@@ -25,6 +25,7 @@
  */
 
 #include "CursorTool.h"
+#include "Debugger.h"
 #include "Editor.h"
 #include "EditorWrapper.h"
 #include "FindInFilesWidget.h"
@@ -36,7 +37,10 @@
 #include "WidgetTool.h"
 #include "WidgetTreeModel.h"
 #include <AK/StringBuilder.h>
+#include <LibCore/Event.h>
+#include <LibCore/EventLoop.h>
 #include <LibCore/File.h>
+#include <LibDebug/DebugSession.h>
 #include <LibGUI/AboutDialog.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/ActionGroup.h>
@@ -58,9 +62,12 @@
 #include <LibGUI/TextBox.h>
 #include <LibGUI/TextEditor.h>
 #include <LibGUI/ToolBar.h>
+#include <LibGUI/ToolBarContainer.h>
 #include <LibGUI/TreeView.h>
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
+#include <LibThread/Lock.h>
+#include <LibThread/Thread.h>
 #include <LibVT/TerminalWidget.h>
 #include <stdio.h>
 #include <sys/wait.h>
@@ -83,7 +90,7 @@ static RefPtr<GUI::TabWidget> s_action_tab_widget;
 
 void add_new_editor(GUI::Widget& parent)
 {
-    auto wrapper = EditorWrapper::construct();
+    auto wrapper = EditorWrapper::construct(Debugger::on_breakpoint_change);
     if (s_action_tab_widget) {
         parent.insert_child_before(wrapper, *s_action_tab_widget);
     } else {
@@ -119,6 +126,24 @@ Editor& current_editor()
     return current_editor_wrapper().editor();
 }
 
+NonnullRefPtr<EditorWrapper> get_editor_of_file(const String& file)
+{
+    for (auto& wrapper : g_all_editor_wrappers) {
+        String wrapper_file = wrapper.filename_label().text();
+        if (wrapper_file == file || String::format("./%s", wrapper_file.characters()) == file) {
+            return wrapper;
+        }
+    }
+    ASSERT_NOT_REACHED();
+}
+
+String get_project_executable_path()
+{
+    // e.g /my/project.files => /my/project
+    // TODO: Perhaps a Makefile rule for getting the value of $(PROGRAM) would be better?
+    return g_project->path().substring(0, g_project->path().index_of(".").value());
+}
+
 static void build(TerminalWrapper&);
 static void run(TerminalWrapper&);
 void open_project(String);
@@ -149,7 +174,7 @@ int main(int argc, char** argv)
 
     widget.set_fill_with_background_color(true);
     widget.set_layout<GUI::VerticalBoxLayout>();
-    widget.layout()->set_spacing(0);
+    widget.layout()->set_spacing(2);
 
     StringBuilder path;
     path.append(getenv("PATH"));
@@ -161,9 +186,10 @@ int main(int argc, char** argv)
     if (!make_is_available())
         GUI::MessageBox::show("The 'make' command is not available. You probably want to install the binutils, gcc, and make ports from the root of the Serenity repository.", "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
 
-    open_project("/home/anon/js/javascript.files");
+    open_project("/home/anon/little/little.files");
 
-    auto& toolbar = widget.add<GUI::ToolBar>();
+    auto& toolbar_container = widget.add<GUI::ToolBarContainer>();
+    auto& toolbar = toolbar_container.add<GUI::ToolBar>();
 
     auto selected_file_names = [&] {
         Vector<String> files;
@@ -274,10 +300,9 @@ int main(int argc, char** argv)
     GUI::ActionGroup tool_actions;
     tool_actions.set_exclusive(true);
 
-    auto cursor_tool_action = GUI::Action::create("Cursor", Gfx::Bitmap::load_from_file("/res/icons/widgets/Cursor.png"), [&](auto&) {
+    auto cursor_tool_action = GUI::Action::create_checkable("Cursor", Gfx::Bitmap::load_from_file("/res/icons/widgets/Cursor.png"), [&](auto&) {
         g_form_editor_widget->set_tool(make<CursorTool>(*g_form_editor_widget));
     });
-    cursor_tool_action->set_checkable(true);
     cursor_tool_action->set_checked(true);
     tool_actions.add_action(cursor_tool_action);
 
@@ -285,14 +310,13 @@ int main(int argc, char** argv)
 
     GUI::WidgetClassRegistration::for_each([&](const GUI::WidgetClassRegistration& reg) {
         auto icon_path = String::format("/res/icons/widgets/G%s.png", reg.class_name().characters());
-        auto action = GUI::Action::create(reg.class_name(), Gfx::Bitmap::load_from_file(icon_path), [&reg](auto&) {
+        auto action = GUI::Action::create_checkable(reg.class_name(), Gfx::Bitmap::load_from_file(icon_path), [&reg](auto&) {
             g_form_editor_widget->set_tool(make<WidgetTool>(*g_form_editor_widget, reg));
             auto widget = reg.construct();
             g_form_editor_widget->form_widget().add_child(widget);
             widget->set_relative_rect(30, 30, 30, 30);
             g_form_editor_widget->model().update();
         });
-        action->set_checkable(true);
         action->set_checked(false);
         tool_actions.add_action(action);
         form_widgets_toolbar.add_action(move(action));
@@ -491,7 +515,7 @@ int main(int argc, char** argv)
         locator.open();
     });
 
-    auto menubar = make<GUI::MenuBar>();
+    auto menubar = GUI::MenuBar::construct();
     auto& app_menu = menubar->add_menu("HackStudio");
     app_menu.add_action(open_action);
     app_menu.add_action(save_action);
@@ -510,7 +534,7 @@ int main(int argc, char** argv)
         find_in_files_widget.focus_textbox_and_select_all();
     }));
 
-    auto stop_action = GUI::Action::create("Stop", Gfx::Bitmap::load_from_file("/res/icons/16x16/stop.png"), [&](auto&) {
+    auto stop_action = GUI::Action::create("Stop", Gfx::Bitmap::load_from_file("/res/icons/16x16/program-stop.png"), [&](auto&) {
         terminal_wrapper.kill_running_command();
     });
 
@@ -525,19 +549,89 @@ int main(int argc, char** argv)
         stop_action->set_enabled(true);
     });
     toolbar.add_action(build_action);
+    toolbar.add_separator();
 
-    auto run_action = GUI::Action::create("Run", { Mod_Ctrl, Key_R }, Gfx::Bitmap::load_from_file("/res/icons/16x16/play.png"), [&](auto&) {
+    auto run_action = GUI::Action::create("Run", { Mod_Ctrl, Key_R }, Gfx::Bitmap::load_from_file("/res/icons/16x16/program-run.png"), [&](auto&) {
         reveal_action_tab(terminal_wrapper);
         run(terminal_wrapper);
         stop_action->set_enabled(true);
     });
+
+    RefPtr<LibThread::Thread> debugger_thread;
+    auto debug_action = GUI::Action::create("Debug", Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-run.png"), [&](auto&) {
+        if (g_project->type() != ProjectType::Cpp) {
+            GUI::MessageBox::show(String::format("Cannot debug current project type", get_project_executable_path().characters()), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
+            return;
+        }
+        if (!GUI::FilePicker::file_exists(get_project_executable_path())) {
+            GUI::MessageBox::show(String::format("Could not find file: %s. (did you build the project?)", get_project_executable_path().characters()), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
+            return;
+        }
+        if (Debugger::the().session()) {
+            GUI::MessageBox::show("Debugger is already running", "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
+            return;
+        }
+        Debugger::the().set_executable_path(get_project_executable_path());
+        debugger_thread = adopt(*new LibThread::Thread(Debugger::start_static));
+        debugger_thread->start();
+    });
+
+    auto continue_action = GUI::Action::create("Continue", Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-continue.png"), [&](auto&) {
+        pthread_mutex_lock(Debugger::the().continue_mutex());
+        Debugger::the().set_continue_type(Debugger::ContinueType::Continue);
+        pthread_cond_signal(Debugger::the().continue_cond());
+        pthread_mutex_unlock(Debugger::the().continue_mutex());
+    });
+
+    auto single_step_action = GUI::Action::create("Single Step", Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-single-step.png"), [&](auto&) {
+        pthread_mutex_lock(Debugger::the().continue_mutex());
+        Debugger::the().set_continue_type(Debugger::ContinueType::SourceSingleStep);
+        pthread_cond_signal(Debugger::the().continue_cond());
+        pthread_mutex_unlock(Debugger::the().continue_mutex());
+    });
+    continue_action->set_enabled(false);
+    single_step_action->set_enabled(false);
+
     toolbar.add_action(run_action);
     toolbar.add_action(stop_action);
 
+    toolbar.add_separator();
+    toolbar.add_action(debug_action);
+    toolbar.add_action(continue_action);
+    toolbar.add_action(single_step_action);
+
+    RefPtr<EditorWrapper> current_editor_in_execution;
+    Debugger::initialize(
+        [&](DebugInfo::SourcePosition source_position) {
+            dbg() << "Program stopped";
+            current_editor_in_execution = get_editor_of_file(source_position.file_path);
+            current_editor_in_execution->editor().set_execution_position(source_position.line_number - 1);
+            continue_action->set_enabled(true);
+            single_step_action->set_enabled(true);
+        },
+        [&]() {
+            dbg() << "Program continued";
+            continue_action->set_enabled(false);
+            single_step_action->set_enabled(false);
+            if (current_editor_in_execution) {
+                current_editor_in_execution->editor().clear_execution_position();
+            }
+        },
+        [&]() {
+            dbg() << "Program exited";
+            Core::EventLoop::main().post_event(*g_window, make<Core::DeferredInvocationEvent>([=](auto&) {
+                GUI::MessageBox::show("Program Exited", "Debugger", GUI::MessageBox::Type::Information, GUI::MessageBox::InputType::OK, g_window);
+            }));
+            Core::EventLoop::wake();
+        });
+
     auto& build_menu = menubar->add_menu("Build");
     build_menu.add_action(build_action);
+    build_menu.add_separator();
     build_menu.add_action(run_action);
     build_menu.add_action(stop_action);
+    build_menu.add_separator();
+    build_menu.add_action(debug_action);
 
     auto& view_menu = menubar->add_menu("View");
     view_menu.add_action(hide_action_tabs_action);
@@ -612,6 +706,9 @@ void open_project(String filename)
         g_project_tree_view->set_model(g_project->model());
         g_project_tree_view->toggle_index(g_project_tree_view->model()->index(0, 0));
         g_project_tree_view->update();
+    }
+    if (Debugger::is_initialized()) {
+        Debugger::the().reset_breakpoints();
     }
 }
 

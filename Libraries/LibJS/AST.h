@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -38,6 +39,8 @@
 
 namespace JS {
 
+class VariableDeclaration;
+
 template<class T, class... Args>
 static inline NonnullRefPtr<T>
 create_ast_node(Args&&... args)
@@ -52,8 +55,10 @@ public:
     virtual Value execute(Interpreter&) const = 0;
     virtual void dump(int indent) const;
     virtual bool is_identifier() const { return false; }
+    virtual bool is_spread_expression() const { return false; }
     virtual bool is_member_expression() const { return false; }
     virtual bool is_scope_node() const { return false; }
+    virtual bool is_program() const { return false; }
     virtual bool is_variable_declaration() const { return false; }
     virtual bool is_new_expression() const { return false; }
 
@@ -105,12 +110,16 @@ public:
     virtual Value execute(Interpreter&) const override;
     virtual void dump(int indent) const override;
 
+    void add_variables(NonnullRefPtrVector<VariableDeclaration>);
+    const NonnullRefPtrVector<VariableDeclaration>& variables() const { return m_variables; }
+
 protected:
     ScopeNode() {}
 
 private:
     virtual bool is_scope_node() const final { return true; }
     NonnullRefPtrVector<Statement> m_children;
+    NonnullRefPtrVector<VariableDeclaration> m_variables;
 };
 
 class Program : public ScopeNode {
@@ -118,6 +127,7 @@ public:
     Program() {}
 
 private:
+    virtual bool is_program() const override { return true; }
     virtual const char* class_name() const override { return "Program"; }
 };
 
@@ -130,6 +140,8 @@ private:
 };
 
 class Expression : public ASTNode {
+public:
+    virtual Reference to_reference(Interpreter&) const;
 };
 
 class Declaration : public Statement {
@@ -142,19 +154,23 @@ public:
     const Vector<FlyString>& parameters() const { return m_parameters; };
 
 protected:
-    FunctionNode(const FlyString& name, NonnullRefPtr<Statement> body, Vector<FlyString> parameters = {})
+    FunctionNode(const FlyString& name, NonnullRefPtr<Statement> body, Vector<FlyString> parameters, NonnullRefPtrVector<VariableDeclaration> variables)
         : m_name(name)
         , m_body(move(body))
         , m_parameters(move(parameters))
+        , m_variables(move(variables))
     {
     }
 
     void dump(int indent, const char* class_name) const;
 
+    const NonnullRefPtrVector<VariableDeclaration>& variables() const { return m_variables; }
+
 private:
     FlyString m_name;
     NonnullRefPtr<Statement> m_body;
     const Vector<FlyString> m_parameters;
+    NonnullRefPtrVector<VariableDeclaration> m_variables;
 };
 
 class FunctionDeclaration final
@@ -163,8 +179,8 @@ class FunctionDeclaration final
 public:
     static bool must_have_name() { return true; }
 
-    FunctionDeclaration(const FlyString& name, NonnullRefPtr<Statement> body, Vector<FlyString> parameters = {})
-        : FunctionNode(name, move(body), move(parameters))
+    FunctionDeclaration(const FlyString& name, NonnullRefPtr<Statement> body, Vector<FlyString> parameters, NonnullRefPtrVector<VariableDeclaration> variables)
+        : FunctionNode(name, move(body), move(parameters), move(variables))
     {
     }
 
@@ -180,8 +196,8 @@ class FunctionExpression final : public Expression
 public:
     static bool must_have_name() { return false; }
 
-    FunctionExpression(const FlyString& name, NonnullRefPtr<Statement> body, Vector<FlyString> parameters = {})
-        : FunctionNode(name, move(body), move(parameters))
+    FunctionExpression(const FlyString& name, NonnullRefPtr<Statement> body, Vector<FlyString> parameters, NonnullRefPtrVector<VariableDeclaration> variables)
+        : FunctionNode(name, move(body), move(parameters), move(variables))
     {
     }
 
@@ -329,6 +345,8 @@ enum class BinaryOp {
     BitwiseXor,
     LeftShift,
     RightShift,
+    UnsignedRightShift,
+    In,
     InstanceOf,
 };
 
@@ -355,6 +373,7 @@ private:
 enum class LogicalOp {
     And,
     Or,
+    NullishCoalescing,
 };
 
 class LogicalExpression : public Expression {
@@ -383,6 +402,8 @@ enum class UnaryOp {
     Plus,
     Minus,
     Typeof,
+    Void,
+    Delete,
 };
 
 class UnaryExpression : public Expression {
@@ -495,11 +516,38 @@ public:
     virtual Value execute(Interpreter&) const override;
     virtual void dump(int indent) const override;
     virtual bool is_identifier() const override { return true; }
+    virtual Reference to_reference(Interpreter&) const override;
 
 private:
     virtual const char* class_name() const override { return "Identifier"; }
 
     FlyString m_string;
+};
+
+class SpreadExpression final : public Expression {
+public:
+    explicit SpreadExpression(NonnullRefPtr<Expression> target)
+        : m_target(target)
+    {
+    }
+
+    virtual Value execute(Interpreter&) const override;
+    virtual void dump(int indent) const override;
+    virtual bool is_spread_expression() const override { return true; }
+
+private:
+    virtual const char* class_name() const override { return "SpreadExpression"; }
+
+    NonnullRefPtr<Expression> m_target;
+};
+
+class ThisExpression final : public Expression {
+public:
+    virtual Value execute(Interpreter&) const override;
+    virtual void dump(int indent) const override;
+
+private:
+    virtual const char* class_name() const override { return "ThisExpression"; }
 };
 
 class CallExpression : public Expression {
@@ -544,11 +592,14 @@ enum class AssignmentOp {
     SubtractionAssignment,
     MultiplicationAssignment,
     DivisionAssignment,
+    LeftShiftAssignment,
+    RightShiftAssignment,
+    UnsignedRightShiftAssignment,
 };
 
 class AssignmentExpression : public Expression {
 public:
-    AssignmentExpression(AssignmentOp op, NonnullRefPtr<ASTNode> lhs, NonnullRefPtr<Expression> rhs)
+    AssignmentExpression(AssignmentOp op, NonnullRefPtr<Expression> lhs, NonnullRefPtr<Expression> rhs)
         : m_op(op)
         , m_lhs(move(lhs))
         , m_rhs(move(rhs))
@@ -562,7 +613,7 @@ private:
     virtual const char* class_name() const override { return "AssignmentExpression"; }
 
     AssignmentOp m_op;
-    NonnullRefPtr<ASTNode> m_lhs;
+    NonnullRefPtr<Expression> m_lhs;
     NonnullRefPtr<Expression> m_rhs;
 };
 
@@ -632,6 +683,8 @@ public:
     virtual Value execute(Interpreter&) const override;
     virtual void dump(int indent) const override;
 
+    const NonnullRefPtrVector<VariableDeclarator>& declarations() const { return m_declarations; }
+
 private:
     virtual const char* class_name() const override { return "VariableDeclaration"; }
 
@@ -639,9 +692,34 @@ private:
     NonnullRefPtrVector<VariableDeclarator> m_declarations;
 };
 
+class ObjectProperty final : public ASTNode {
+public:
+    ObjectProperty(NonnullRefPtr<Expression> key, NonnullRefPtr<Expression> value)
+        : m_key(move(key))
+        , m_value(move(value))
+    {
+    }
+
+    const Expression& key() const { return m_key; }
+    const Expression& value() const { return m_value; }
+
+    bool is_spread() const { return m_is_spread; }
+    void set_is_spread() { m_is_spread = true; }
+
+    virtual void dump(int indent) const override;
+    virtual Value execute(Interpreter&) const override;
+
+private:
+    virtual const char* class_name() const override { return "ObjectProperty"; }
+
+    NonnullRefPtr<Expression> m_key;
+    NonnullRefPtr<Expression> m_value;
+    bool m_is_spread { false };
+};
+
 class ObjectExpression : public Expression {
 public:
-    ObjectExpression(HashMap<FlyString, NonnullRefPtr<Expression>> properties = {})
+    ObjectExpression(NonnullRefPtrVector<ObjectProperty> properties = {})
         : m_properties(move(properties))
     {
     }
@@ -652,17 +730,17 @@ public:
 private:
     virtual const char* class_name() const override { return "ObjectExpression"; }
 
-    HashMap<FlyString, NonnullRefPtr<Expression>> m_properties;
+    NonnullRefPtrVector<ObjectProperty> m_properties;
 };
 
 class ArrayExpression : public Expression {
 public:
-    ArrayExpression(NonnullRefPtrVector<Expression> elements)
+    ArrayExpression(Vector<RefPtr<Expression>> elements)
         : m_elements(move(elements))
     {
     }
 
-    const NonnullRefPtrVector<Expression>& elements() const { return m_elements; }
+    const Vector<RefPtr<Expression>>& elements() const { return m_elements; }
 
     virtual Value execute(Interpreter&) const override;
     virtual void dump(int indent) const override;
@@ -670,7 +748,7 @@ public:
 private:
     virtual const char* class_name() const override { return "ArrayExpression"; }
 
-    NonnullRefPtrVector<Expression> m_elements;
+    Vector<RefPtr<Expression>> m_elements;
 };
 
 class MemberExpression final : public Expression {
@@ -684,12 +762,15 @@ public:
 
     virtual Value execute(Interpreter&) const override;
     virtual void dump(int indent) const override;
+    virtual Reference to_reference(Interpreter&) const override;
 
     bool is_computed() const { return m_computed; }
     const Expression& object() const { return *m_object; }
     const Expression& property() const { return *m_property; }
 
     PropertyName computed_property_name(Interpreter&) const;
+
+    String to_string_approximation() const;
 
 private:
     virtual bool is_member_expression() const override { return true; }

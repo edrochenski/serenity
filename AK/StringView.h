@@ -26,6 +26,8 @@
 
 #pragma once
 
+#include <AK/Assertions.h>
+#include <AK/Checked.h>
 #include <AK/Forward.h>
 #include <AK/StdLibExtras.h>
 #include <AK/StringUtils.h>
@@ -36,18 +38,20 @@ class StringView {
 public:
     using ConstIterator = const char*;
 
-    StringView() {}
-    StringView(const char* characters, size_t length)
+    ALWAYS_INLINE StringView() { }
+    ALWAYS_INLINE StringView(const char* characters, size_t length)
         : m_characters(characters)
         , m_length(length)
     {
+        ASSERT(!Checked<uintptr_t>::addition_would_overflow((uintptr_t)characters, length));
     }
-    StringView(const unsigned char* characters, size_t length)
+    ALWAYS_INLINE StringView(const unsigned char* characters, size_t length)
         : m_characters((const char*)characters)
         , m_length(length)
     {
+        ASSERT(!Checked<uintptr_t>::addition_would_overflow((uintptr_t)characters, length));
     }
-    [[gnu::always_inline]] inline StringView(const char* cstring)
+    ALWAYS_INLINE StringView(const char* cstring)
         : m_characters(cstring)
         , m_length(cstring ? __builtin_strlen(cstring) : 0)
     {
@@ -73,6 +77,7 @@ public:
     bool starts_with(char) const;
     bool ends_with(char) const;
     bool matches(const StringView& mask, CaseSensitivity = CaseSensitivity::CaseInsensitive) const;
+    bool contains(char) const;
 
     StringView substring_view(size_t start, size_t length) const;
     Vector<StringView> split_view(char, bool keep_empty = false) const;
